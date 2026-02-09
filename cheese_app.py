@@ -5,26 +5,32 @@ from bs4 import BeautifulSoup
 import os
 import glob
 
-# --- CONFIGURATION ---
+# --- CONFIGURATION (UNIVERSAL) ---
+# This block intelligently checks Railway first, then Streamlit Secrets.
 try:
-    API_KEY = st.secrets["GOOGLE_API_KEY"]
+    if "GOOGLE_API_KEY" in os.environ:
+        API_KEY = os.environ["GOOGLE_API_KEY"]
+    else:
+        API_KEY = st.secrets["GOOGLE_API_KEY"]
 except:
-    st.error("No API Key found. Please add GOOGLE_API_KEY to Streamlit Secrets.")
+    st.error("Critical Error: No API Key found in Environment (Railway) or Secrets.")
     st.stop()
 
 genai.configure(api_key=API_KEY)
 model = genai.GenerativeModel('gemini-2.0-flash')
 
+
 # --- WEBPAGE CONFIG ---
 st.set_page_config(page_title="Hispanic Cheese Makers", page_icon="🧀")
 
-# --- HEADER ---
-# [1, 10, 1] gives the middle column LOTS of space so text doesn't wrap 
+
+# --- HEADER (Styled to match your Brand) ---
+# [1, 10, 1] gives the text plenty of room so it doesn't wrap awkwardly
 col1, col2, col3 = st.columns([1, 10, 1])
 
 with col2:
     # 1. CENTERED LOGO
-    # We use a nested column to shrink the logo so it isn't giant
+    # Nested columns to control logo size perfectly
     sub_col1, sub_col2, sub_col3 = st.columns([2, 1, 2])
     with sub_col2:
         possible_names = ["logo_new.png", "logo_new.jpg", "logo.jpg", "logo.png", "logo"]
@@ -35,7 +41,7 @@ with col2:
         else:
             st.write("🧀")
 
-    # 2. TWO-LINE ELEGANT TITLE (Matching Screenshot Font)
+    # 2. TWO-LINE ELEGANT TITLE (Serif Font)
     st.markdown(
         """
         <style>
@@ -45,15 +51,16 @@ with col2:
             text-transform: uppercase;
             letter-spacing: 3px;
             line-height: 1.5;
-            color: #FFFFFF; /* White/Light Grey to show on dark mode */
+            color: #2c3e50; /* Dark elegant grey/blue */
+            margin-top: 10px;
         }
         .line-one {
-            font-size: 26px; /* Slightly larger */
+            font-size: 24px;
             font-weight: 300;
         }
         .line-two {
-            font-size: 26px;
-            font-weight: 300;
+            font-size: 24px;
+            font-weight: 400; /* Slightly bolder for the name */
         }
         </style>
         
@@ -67,10 +74,11 @@ with col2:
 
 st.markdown("---")
 
-# --- 1. DATA LOADING (Cached) ---
+
+# --- 1. DATA LOADING (Cached for Railway Performance) ---
 @st.cache_resource(ttl=3600) 
 def load_all_data():
-    # A. Live Scrape
+    # A. Live Website Scrape
     urls = [
         "https://hcmakers.com/", 
         "https://hcmakers.com/products/", 
@@ -88,7 +96,7 @@ def load_all_data():
             web_text += f"\nSOURCE: {url}\nTEXT: {clean}\n"
         except: continue
         
-    # B. Load PDFs
+    # B. Load Manual PDFs
     pdfs = []
     local_files = glob.glob("*.pdf")
     for f in local_files:
@@ -97,60 +105,72 @@ def load_all_data():
 
     return web_text, pdfs
 
+
 # --- INITIAL LOAD ---
-with st.spinner("System initializing..."):
+# This runs once on startup to keep the bot fast
+with st.spinner("Initializing System..."):
     live_web_text, ai_pdfs = load_all_data()
 
-# --- CHAT INTERFACE ---
+
+# --- CHAT ENGINE ---
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
+
+# Display previous history
 for message in st.session_state.chat_history:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# Input at the bottom
+
+# --- INPUT ---
 if prompt := st.chat_input("How can I help you? / ¿Cómo te puedo ayudar?"):
     
     with st.chat_message("user"):
         st.markdown(prompt)
     st.session_state.chat_history.append({"role": "user", "content": prompt})
 
-    with st.chat_message("assistant"):
-        # The spinner ensures it says "Thinking" while connecting
-        with st.spinner("Thinking..."):
-            system_prompt = f"""
-            You are the Senior Sales AI for "Hispanic Cheese Makers-Nuestro Queso".
-            
-            RULES:
-            1. **VIDEO REQUESTS**: IF asked for video/visuals, Reply EXACTLY: 
-               "You can watch our trend videos and category insights on our Knowledge Hub: https://hcmakers.com/category-knowledge/"
-               (Do not link videos directly, send them to the Hub).
-            
-            2. **DATA**: Use the PDF tables for specific numbers (Protein, Specs).
-            3. **CONTACT**: Plant is in Kent, IL.
-            4. **NO IMAGES**: Text only.
-            5. **LANG**: English or Spanish.
-            
-            WEBSITE CONTEXT:
-            {live_web_text}
-            """
-            
-            payload = [system_prompt] + ai_pdfs + [prompt]
-            
-            try:
-                # Get the Stream
-                stream = model.generate_content(payload, stream=True)
-                
-                # Filter Text Only
-                def text_stream():
-                    for chunk in stream:
-                        if chunk.text:
-                            yield chunk.text
 
-                # Write it live
-                response = st.write_stream(text_stream)
-                
-                st.session_state.chat_history.append({"role": "assistant", "content": response})
-            except:
-                st.error("Just a moment, re-connecting...")
+    with st.chat_message("assistant"):
+        # We assume connection is fast, so we stream immediately
+        
+        system_prompt = f"""
+        You are the Senior Sales AI for "Hispanic Cheese Makers-Nuestro Queso".
+        
+        RULES:
+        1. **VIDEO/TREND REQUESTS**: IF the user asks to see a video, trends, or visual insights:
+           - Reply EXACTLY: "You can watch our trend videos and category insights on our Knowledge Hub: https://hcmakers.com/category-knowledge/"
+           - DO NOT provide other YouTube links. Send them to the Hub.
+        
+        2. **DATA/NUMBERS**: Use the provided PDF tables for specific numbers (Protein, Shelf Life, Pack Sizes).
+        
+        3. **CONTACT**: 
+           - Plant: Kent, IL (752 N. Kent Road).
+           - Phone: 847-258-0375.
+        
+        4. **NO IMAGES**: Do not attempt to generate images. Text descriptions only.
+        
+        5. **LANG**: English or Spanish (Detect User Language).
+        
+        WEBSITE CONTEXT:
+        {live_web_text}
+        """
+        
+        payload = [system_prompt] + ai_pdfs + [prompt]
+        
+        try:
+            # 1. GENERATE STREAM
+            stream = model.generate_content(payload, stream=True)
+            
+            # 2. CLEANER FUNCTION (Fixes Railway "Raw Data" bugs)
+            def clean_stream():
+                for chunk in stream:
+                    if chunk.text:
+                        yield chunk.text
+
+            # 3. WRITE TO SCREEN
+            response = st.write_stream(clean_stream)
+            
+            st.session_state.chat_history.append({"role": "assistant", "content": response})
+        except:
+            st.error("Just a moment, connection refreshing...")
