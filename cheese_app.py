@@ -14,12 +14,10 @@ try:
     else:
         API_KEY = st.secrets["GOOGLE_API_KEY"]
 except:
-    st.error("Critical Error: No API Key found in Environment (Railway) or Secrets.")
+    st.error("Critical Error: No API Key found.")
     st.stop()
 
 genai.configure(api_key=API_KEY)
-# "gemini-1.5-flash" is currently the most reliable/fast production model
-# We stick to Flash models for maximum speed
 model = genai.GenerativeModel('gemini-2.0-flash')
 
 
@@ -27,13 +25,12 @@ model = genai.GenerativeModel('gemini-2.0-flash')
 st.set_page_config(page_title="Hispanic Cheese Makers", page_icon="🧀")
 
 
-# --- HEADER (Styled to match your Brand) ---
-# [1, 10, 1] Layout for nice centering
+# --- HEADER (Brand Styling) ---
+# [1, 10, 1] Layout for proper centering
 col1, col2, col3 = st.columns([1, 10, 1])
 
 with col2:
     # 1. CENTERED LOGO
-    # Nested columns to control logo size
     sub_col1, sub_col2, sub_col3 = st.columns([2, 1, 2])
     with sub_col2:
         possible_names = ["logo_new.png", "logo_new.jpg", "logo.jpg", "logo.png", "logo"]
@@ -71,14 +68,13 @@ with col2:
 st.markdown("---")
 
 
-# --- 1. DATA LOADING (Optimized for Speed) ---
+# --- 1. DATA LOADING (Speed Optimized) ---
 @st.cache_resource(ttl=3600) 
-def load_all_data():
-    # Use a Session for faster repeated connection reuse
+def load_data_fast():
+    # Use Session for faster repeated connection reuse
     session = requests.Session()
     headers = {"User-Agent": "Mozilla/5.0"}
     
-    # A. Live Website Scrape
     urls = [
         "https://hcmakers.com/", 
         "https://hcmakers.com/products/", 
@@ -93,13 +89,12 @@ def load_all_data():
             r = session.get(url, headers=headers)
             soup = BeautifulSoup(r.content, 'html.parser')
             # Extract text
-            raw_text = soup.get_text(' ', strip=True)
-            # REGEX OPTIMIZATION: Shrink extra whitespace to speed up AI reading
-            clean_text = re.sub(r'\s+', ' ', raw_text)[:4000]
-            web_text += f"\nSOURCE: {url}\nTEXT: {clean_text}\n"
+            raw = soup.get_text(' ', strip=True)
+            # REGEX SPEED HACK: Remove extra spaces to shrink payload size
+            clean = re.sub(r'\s+', ' ', raw)[:3500] 
+            web_text += f"SOURCE: {url} | DATA: {clean}\n"
         except: continue
         
-    # B. Load Manual PDFs
     pdfs = []
     local_files = glob.glob("*.pdf")
     for f in local_files:
@@ -110,9 +105,9 @@ def load_all_data():
 
 
 # --- INITIAL LOAD ---
-# This runs once on startup
+# Runs once on startup to cache data
 with st.spinner("Initializing System..."):
-    live_web_text, ai_pdfs = load_all_data()
+    live_web_text, ai_pdfs = load_data_fast()
 
 
 # --- CHAT ENGINE ---
@@ -126,9 +121,10 @@ for message in st.session_state.chat_history:
         st.markdown(message["content"])
 
 
-# --- INPUT ---
+# --- INPUT & RESPONSE ---
 if prompt := st.chat_input("How can I help you? / ¿Cómo te puedo ayudar?"):
     
+    # Show User Message
     with st.chat_message("user"):
         st.markdown(prompt)
     st.session_state.chat_history.append({"role": "user", "content": prompt})
@@ -150,7 +146,7 @@ if prompt := st.chat_input("How can I help you? / ¿Cómo te puedo ayudar?"):
            - Plant: Kent, IL (752 N. Kent Road).
            - Phone: 847-258-0375.
         
-        4. **NO IMAGES**: Text descriptions only.
+        4. **NO IMAGES**: Do not attempt to generate images. Text descriptions only.
         
         5. **LANG**: English or Spanish (Detect User Language).
         
@@ -160,21 +156,22 @@ if prompt := st.chat_input("How can I help you? / ¿Cómo te puedo ayudar?"):
         
         payload = [system_prompt] + ai_pdfs + [prompt]
         
-        # Display "Thinking..." then replace instantly with text
         try:
+            # 1. CONNECT & START STREAMING (With "Thinking..." Spinner)
             with st.spinner("Thinking..."):
-                # Connect to Google (High Speed Stream)
                 stream = model.generate_content(payload, stream=True)
             
-            # Helper to extract clean text chunks
-            def clean_stream():
+            # 2. FAST TEXT FILTER (Removes any technical headers)
+            def instant_token_stream():
                 for chunk in stream:
                     if chunk.text:
                         yield chunk.text
 
-            # Stream response to screen
-            response = st.write_stream(clean_stream)
+            # 3. TYPE ON SCREEN (This happens instantly after spinner vanishes)
+            response = st.write_stream(instant_token_stream)
             
+            # 4. SAVE TO MEMORY
             st.session_state.chat_history.append({"role": "assistant", "content": response})
+            
         except:
-            st.error("Just a moment, connection refreshing...")
+            st.error("Connection hiccup... please try again.")
