@@ -4,19 +4,22 @@ import requests
 from bs4 import BeautifulSoup
 import os
 import glob
+import re
 
-# --- CONFIGURATION (UNIVERSAL - Works on Railway & Streamlit) ---
-# This block ensures the bot finds the password whether on Cloud or Railway
+# --- CONFIGURATION (UNIVERSAL) ---
+# Works on Railway (Environment) & Streamlit Cloud (Secrets)
 try:
     if "GOOGLE_API_KEY" in os.environ:
         API_KEY = os.environ["GOOGLE_API_KEY"]
     else:
         API_KEY = st.secrets["GOOGLE_API_KEY"]
 except:
-    st.error("Critical Error: No API Key found in Environment Variables (Railway) or Secrets.")
+    st.error("Critical Error: No API Key found in Environment (Railway) or Secrets.")
     st.stop()
 
 genai.configure(api_key=API_KEY)
+# "gemini-1.5-flash" is currently the most reliable/fast production model
+# We stick to Flash models for maximum speed
 model = genai.GenerativeModel('gemini-2.0-flash')
 
 
@@ -25,6 +28,7 @@ st.set_page_config(page_title="Hispanic Cheese Makers", page_icon="🧀")
 
 
 # --- HEADER (Styled to match your Brand) ---
+# [1, 10, 1] Layout for nice centering
 col1, col2, col3 = st.columns([1, 10, 1])
 
 with col2:
@@ -40,7 +44,7 @@ with col2:
         else:
             st.write("🧀")
 
-    # 2. TWO-LINE ELEGANT TITLE (Serif Font)
+    # 2. TWO-LINE ELEGANT TITLE
     st.markdown(
         """
         <style>
@@ -50,19 +54,12 @@ with col2:
             text-transform: uppercase;
             letter-spacing: 3px;
             line-height: 1.5;
-            color: #2c3e50; /* Dark elegant grey/blue */
+            color: #2c3e50;
             margin-top: 10px;
         }
-        .line-one {
-            font-size: 24px;
-            font-weight: 300;
-        }
-        .line-two {
-            font-size: 24px;
-            font-weight: 400; /* Slightly bolder for the name */
-        }
+        .line-one { font-size: 24px; font-weight: 300; }
+        .line-two { font-size: 24px; font-weight: 400; }
         </style>
-        
         <div class="header-text">
             <div class="line-one">Hispanic Cheese Makers</div>
             <div class="line-two">Nuestro Queso</div>
@@ -74,9 +71,13 @@ with col2:
 st.markdown("---")
 
 
-# --- 1. DATA LOADING (Cached for Railway Performance) ---
+# --- 1. DATA LOADING (Optimized for Speed) ---
 @st.cache_resource(ttl=3600) 
 def load_all_data():
+    # Use a Session for faster repeated connection reuse
+    session = requests.Session()
+    headers = {"User-Agent": "Mozilla/5.0"}
+    
     # A. Live Website Scrape
     urls = [
         "https://hcmakers.com/", 
@@ -86,13 +87,16 @@ def load_all_data():
         "https://hcmakers.com/category-knowledge/"
     ]
     web_text = ""
-    headers = {"User-Agent": "Mozilla/5.0"}
+    
     for url in urls:
         try:
-            r = requests.get(url, headers=headers)
+            r = session.get(url, headers=headers)
             soup = BeautifulSoup(r.content, 'html.parser')
-            clean = soup.get_text(' ', strip=True)[:4000]
-            web_text += f"\nSOURCE: {url}\nTEXT: {clean}\n"
+            # Extract text
+            raw_text = soup.get_text(' ', strip=True)
+            # REGEX OPTIMIZATION: Shrink extra whitespace to speed up AI reading
+            clean_text = re.sub(r'\s+', ' ', raw_text)[:4000]
+            web_text += f"\nSOURCE: {url}\nTEXT: {clean_text}\n"
         except: continue
         
     # B. Load Manual PDFs
@@ -146,7 +150,7 @@ if prompt := st.chat_input("How can I help you? / ¿Cómo te puedo ayudar?"):
            - Plant: Kent, IL (752 N. Kent Road).
            - Phone: 847-258-0375.
         
-        4. **NO IMAGES**: Do not attempt to generate images. Text descriptions only.
+        4. **NO IMAGES**: Text descriptions only.
         
         5. **LANG**: English or Spanish (Detect User Language).
         
@@ -156,18 +160,19 @@ if prompt := st.chat_input("How can I help you? / ¿Cómo te puedo ayudar?"):
         
         payload = [system_prompt] + ai_pdfs + [prompt]
         
+        # Display "Thinking..." then replace instantly with text
         try:
-            # "Thinking..." animation appears while waiting for connection
             with st.spinner("Thinking..."):
+                # Connect to Google (High Speed Stream)
                 stream = model.generate_content(payload, stream=True)
             
-            # 2. CLEANER FUNCTION (Fixes Railway "Raw Data" bugs)
+            # Helper to extract clean text chunks
             def clean_stream():
                 for chunk in stream:
                     if chunk.text:
                         yield chunk.text
 
-            # 3. WRITE TO SCREEN (Typing effect)
+            # Stream response to screen
             response = st.write_stream(clean_stream)
             
             st.session_state.chat_history.append({"role": "assistant", "content": response})
