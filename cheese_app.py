@@ -17,7 +17,6 @@ except:
     st.stop()
 
 genai.configure(api_key=API_KEY)
-model = genai.GenerativeModel('gemini-2.0-flash')
 
 
 # --- WEBPAGE CONFIG ---
@@ -62,92 +61,102 @@ with col2:
 st.markdown("---")
 
 
-# --- 1. PRE-COMPUTED DATA LOADING (The "Turbo" Layer) ---
+# --- 1. BRAIN LOADING (Optimized for Adaptive Speed) ---
 @st.cache_resource(ttl=3600) 
-def get_turbo_brain():
-    # Use Session for speed
+def setup_ai_resources():
     session = requests.Session()
     headers = {"User-Agent": "Mozilla/5.0"}
     
-    # 1. Scrape Website Text
+    # 1. Scrape critical context
     urls = [
         "https://hcmakers.com/", 
         "https://hcmakers.com/products/", 
         "https://hcmakers.com/contact-us/",
         "https://hcmakers.com/category-knowledge/"
     ]
-    combined_text = ""
+    
+    web_context = ""
     for url in urls:
         try:
             r = session.get(url, headers=headers, timeout=2)
             soup = BeautifulSoup(r.content, 'html.parser')
-            # Removing double spaces makes AI read 30% faster
-            clean = re.sub(r'\s+', ' ', soup.get_text(' ', strip=True))[:3000]
-            combined_text += f"SOURCE: {url} | DATA: {clean}\n"
+            clean = re.sub(r'\s+', ' ', soup.get_text(' ', strip=True))[:4000]
+            web_context += f"SOURCE: {url} | CONTENT: {clean}\n"
         except: continue
 
-    # 2. Build the System Prompt ONCE here (Saves processing time later)
-    system_instruction = f"""
-    You are the Senior Sales AI for "Hispanic Cheese Makers-Nuestro Queso".
-    CONTEXT: {combined_text}
-    RULES:
-    1. VIDEO REQUESTS: Reply EXACTLY: "You can watch our trend videos on our Knowledge Hub: https://hcmakers.com/category-knowledge/"
-    2. CONTACT: Plant: Kent, IL (752 N. Kent Road). Phone: 847-258-0375.
-    3. NO IMAGES. Text only.
-    4. DATA: Use attached PDF tables for numbers.
-    5. LANG: English or Spanish (Detect User).
-    """
-
-    # 3. Load PDFs
+    # 2. Upload PDFs (Heavy Lifting)
     pdfs = []
     local_files = glob.glob("*.pdf")
     for f in local_files:
         try: pdfs.append(genai.upload_file(f))
         except: pass
+    
+    # 3. System Instruction (The Speed Controller)
+    system_instruction = f"""
+    You are the Senior Sales AI for "Hispanic Cheese Makers-Nuestro Queso".
+    KNOWLEDGE BASE: {web_context}
+    
+    ADAPTIVE SPEED RULES:
+    1. **BE DIRECT:** Do not use fluff like "That is a great question!" or "I can help with that." Just answer the question immediately.
+    2. **LENGTH:** Answer briefly (1-3 sentences) for simple questions (Contact info, location, yes/no). Answer in detail ONLY if asked about Specs, Nutrition, or processes.
+    3. **VIDEO:** If user mentions video/trends -> Link: https://hcmakers.com/category-knowledge/
+    4. **DATA:** Use PDFs for hard numbers.
+    5. **NO IMAGES:** Text only.
+    """
 
     return system_instruction, pdfs
 
-
-# --- INITIAL LOAD ---
-# Pre-calculates the "Brain" so chat is instant
+# --- INITIALIZATION ---
+# Load resources once
 with st.spinner("Initializing System..."):
-    cached_prompt, ai_pdfs = get_turbo_brain()
+    sys_prompt, ai_files = setup_ai_resources()
+
+# Configure Model
+model = genai.GenerativeModel(
+    model_name='gemini-2.0-flash',
+    system_instruction=sys_prompt
+)
 
 
 # --- CHAT ENGINE ---
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
+
+# --- DISPLAY HISTORY ---
 for message in st.session_state.chat_history:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
+
+# --- INPUT & RESPONSE ---
 if prompt := st.chat_input("How can I help you? / ¿Cómo te puedo ayudar?"):
     
     with st.chat_message("user"):
         st.markdown(prompt)
     st.session_state.chat_history.append({"role": "user", "content": prompt})
 
+
     with st.chat_message("assistant"):
         
-        # Prepare payload
-        payload = [cached_prompt] + ai_pdfs + [prompt]
+        # Prepare content (PDFs + User Question)
+        request_payload = ai_files + [prompt]
         
         try:
-            # 1. VISUAL FEEDBACK: Spinner shows immediately
+            # "Thinking" spinner appears immediately
             with st.spinner("Thinking..."):
-                # 2. API CALL: Happens inside spinner
-                stream = model.generate_content(payload, stream=True)
-            
-            # 3. TURBO STREAMER: Direct yield (No complex logic loop)
-            def turbo_stream():
+                # Connect to stream
+                stream = model.generate_content(request_payload, stream=True)
+                
+            # Direct Yield Function (Minimizes code lag)
+            def fast_stream():
                 for chunk in stream:
-                    # Direct text yield saves milliseconds
                     if chunk.text: yield chunk.text
 
-            # 4. INSTANT WRITE: Streamlit starts typing the nanosecond the first word arrives
-            response = st.write_stream(turbo_stream)
+            # Streamlit writes to screen instantly as data arrives
+            response = st.write_stream(fast_stream)
             
             st.session_state.chat_history.append({"role": "assistant", "content": response})
+            
         except:
             st.error("Re-connecting...")
