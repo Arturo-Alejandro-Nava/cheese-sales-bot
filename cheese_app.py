@@ -5,15 +5,15 @@ from bs4 import BeautifulSoup
 import os
 import glob
 
-# --- CONFIGURATION (UNIVERSAL) ---
-# This block intelligently checks Railway first, then Streamlit Secrets.
+# --- CONFIGURATION (UNIVERSAL - Works on Railway & Streamlit) ---
+# This block ensures the bot finds the password whether on Cloud or Railway
 try:
     if "GOOGLE_API_KEY" in os.environ:
         API_KEY = os.environ["GOOGLE_API_KEY"]
     else:
         API_KEY = st.secrets["GOOGLE_API_KEY"]
 except:
-    st.error("Critical Error: No API Key found in Environment (Railway) or Secrets.")
+    st.error("Critical Error: No API Key found in Environment Variables (Railway) or Secrets.")
     st.stop()
 
 genai.configure(api_key=API_KEY)
@@ -25,12 +25,11 @@ st.set_page_config(page_title="Hispanic Cheese Makers", page_icon="🧀")
 
 
 # --- HEADER (Styled to match your Brand) ---
-# [1, 10, 1] gives the text plenty of room so it doesn't wrap awkwardly
 col1, col2, col3 = st.columns([1, 10, 1])
 
 with col2:
     # 1. CENTERED LOGO
-    # Nested columns to control logo size perfectly
+    # Nested columns to control logo size
     sub_col1, sub_col2, sub_col3 = st.columns([2, 1, 2])
     with sub_col2:
         possible_names = ["logo_new.png", "logo_new.jpg", "logo.jpg", "logo.png", "logo"]
@@ -107,7 +106,7 @@ def load_all_data():
 
 
 # --- INITIAL LOAD ---
-# This runs once on startup to keep the bot fast
+# This runs once on startup
 with st.spinner("Initializing System..."):
     live_web_text, ai_pdfs = load_all_data()
 
@@ -117,7 +116,7 @@ if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
 
-# Display previous history
+# Display History
 for message in st.session_state.chat_history:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
@@ -132,7 +131,6 @@ if prompt := st.chat_input("How can I help you? / ¿Cómo te puedo ayudar?"):
 
 
     with st.chat_message("assistant"):
-        # We assume connection is fast, so we stream immediately
         
         system_prompt = f"""
         You are the Senior Sales AI for "Hispanic Cheese Makers-Nuestro Queso".
@@ -159,8 +157,9 @@ if prompt := st.chat_input("How can I help you? / ¿Cómo te puedo ayudar?"):
         payload = [system_prompt] + ai_pdfs + [prompt]
         
         try:
-            # 1. GENERATE STREAM
-            stream = model.generate_content(payload, stream=True)
+            # "Thinking..." animation appears while waiting for connection
+            with st.spinner("Thinking..."):
+                stream = model.generate_content(payload, stream=True)
             
             # 2. CLEANER FUNCTION (Fixes Railway "Raw Data" bugs)
             def clean_stream():
@@ -168,7 +167,7 @@ if prompt := st.chat_input("How can I help you? / ¿Cómo te puedo ayudar?"):
                     if chunk.text:
                         yield chunk.text
 
-            # 3. WRITE TO SCREEN
+            # 3. WRITE TO SCREEN (Typing effect)
             response = st.write_stream(clean_stream)
             
             st.session_state.chat_history.append({"role": "assistant", "content": response})
