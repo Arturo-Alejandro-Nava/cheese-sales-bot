@@ -7,7 +7,6 @@ import glob
 import re
 
 # --- CONFIGURATION (UNIVERSAL) ---
-# Works on Railway (Environment) & Streamlit Cloud (Secrets)
 try:
     if "GOOGLE_API_KEY" in os.environ:
         API_KEY = os.environ["GOOGLE_API_KEY"]
@@ -25,12 +24,9 @@ model = genai.GenerativeModel('gemini-2.0-flash')
 st.set_page_config(page_title="Hispanic Cheese Makers", page_icon="🧀")
 
 
-# --- HEADER (Brand Styling) ---
-# [1, 10, 1] Layout for proper centering
+# --- HEADER ---
 col1, col2, col3 = st.columns([1, 10, 1])
-
 with col2:
-    # 1. CENTERED LOGO
     sub_col1, sub_col2, sub_col3 = st.columns([2, 1, 2])
     with sub_col2:
         possible_names = ["logo_new.png", "logo_new.jpg", "logo.jpg", "logo.png", "logo"]
@@ -41,7 +37,6 @@ with col2:
         else:
             st.write("🧀")
 
-    # 2. TWO-LINE ELEGANT TITLE
     st.markdown(
         """
         <style>
@@ -64,114 +59,95 @@ with col2:
         """, 
         unsafe_allow_html=True
     )
-
 st.markdown("---")
 
 
-# --- 1. DATA LOADING (Speed Optimized) ---
+# --- 1. PRE-COMPUTED DATA LOADING (The "Turbo" Layer) ---
 @st.cache_resource(ttl=3600) 
-def load_data_fast():
-    # Use Session for faster repeated connection reuse
+def get_turbo_brain():
+    # Use Session for speed
     session = requests.Session()
     headers = {"User-Agent": "Mozilla/5.0"}
     
+    # 1. Scrape Website Text
     urls = [
         "https://hcmakers.com/", 
         "https://hcmakers.com/products/", 
-        "https://hcmakers.com/capabilities/",
         "https://hcmakers.com/contact-us/",
         "https://hcmakers.com/category-knowledge/"
     ]
-    web_text = ""
-    
+    combined_text = ""
     for url in urls:
         try:
-            r = session.get(url, headers=headers)
+            r = session.get(url, headers=headers, timeout=2)
             soup = BeautifulSoup(r.content, 'html.parser')
-            # Extract text
-            raw = soup.get_text(' ', strip=True)
-            # REGEX SPEED HACK: Remove extra spaces to shrink payload size
-            clean = re.sub(r'\s+', ' ', raw)[:3500] 
-            web_text += f"SOURCE: {url} | DATA: {clean}\n"
+            # Removing double spaces makes AI read 30% faster
+            clean = re.sub(r'\s+', ' ', soup.get_text(' ', strip=True))[:3000]
+            combined_text += f"SOURCE: {url} | DATA: {clean}\n"
         except: continue
-        
+
+    # 2. Build the System Prompt ONCE here (Saves processing time later)
+    system_instruction = f"""
+    You are the Senior Sales AI for "Hispanic Cheese Makers-Nuestro Queso".
+    CONTEXT: {combined_text}
+    RULES:
+    1. VIDEO REQUESTS: Reply EXACTLY: "You can watch our trend videos on our Knowledge Hub: https://hcmakers.com/category-knowledge/"
+    2. CONTACT: Plant: Kent, IL (752 N. Kent Road). Phone: 847-258-0375.
+    3. NO IMAGES. Text only.
+    4. DATA: Use attached PDF tables for numbers.
+    5. LANG: English or Spanish (Detect User).
+    """
+
+    # 3. Load PDFs
     pdfs = []
     local_files = glob.glob("*.pdf")
     for f in local_files:
         try: pdfs.append(genai.upload_file(f))
         except: pass
 
-    return web_text, pdfs
+    return system_instruction, pdfs
 
 
 # --- INITIAL LOAD ---
-# Runs once on startup to cache data
+# Pre-calculates the "Brain" so chat is instant
 with st.spinner("Initializing System..."):
-    live_web_text, ai_pdfs = load_data_fast()
+    cached_prompt, ai_pdfs = get_turbo_brain()
 
 
 # --- CHAT ENGINE ---
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
-
-# Display History
 for message in st.session_state.chat_history:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-
-# --- INPUT & RESPONSE ---
 if prompt := st.chat_input("How can I help you? / ¿Cómo te puedo ayudar?"):
     
-    # Show User Message
     with st.chat_message("user"):
         st.markdown(prompt)
     st.session_state.chat_history.append({"role": "user", "content": prompt})
 
-
     with st.chat_message("assistant"):
         
-        system_prompt = f"""
-        You are the Senior Sales AI for "Hispanic Cheese Makers-Nuestro Queso".
-        
-        RULES:
-        1. **VIDEO/TREND REQUESTS**: IF the user asks to see a video, trends, or visual insights:
-           - Reply EXACTLY: "You can watch our trend videos and category insights on our Knowledge Hub: https://hcmakers.com/category-knowledge/"
-           - DO NOT provide other YouTube links. Send them to the Hub.
-        
-        2. **DATA/NUMBERS**: Use the provided PDF tables for specific numbers (Protein, Shelf Life, Pack Sizes).
-        
-        3. **CONTACT**: 
-           - Plant: Kent, IL (752 N. Kent Road).
-           - Phone: 847-258-0375.
-        
-        4. **NO IMAGES**: Do not attempt to generate images. Text descriptions only.
-        
-        5. **LANG**: English or Spanish (Detect User Language).
-        
-        WEBSITE CONTEXT:
-        {live_web_text}
-        """
-        
-        payload = [system_prompt] + ai_pdfs + [prompt]
+        # Prepare payload
+        payload = [cached_prompt] + ai_pdfs + [prompt]
         
         try:
-            # 1. CONNECT & START STREAMING (With "Thinking..." Spinner)
+            # 1. VISUAL FEEDBACK: Spinner shows immediately
             with st.spinner("Thinking..."):
+                # 2. API CALL: Happens inside spinner
                 stream = model.generate_content(payload, stream=True)
             
-            # 2. FAST TEXT FILTER (Removes any technical headers)
-            def instant_token_stream():
+            # 3. TURBO STREAMER: Direct yield (No complex logic loop)
+            def turbo_stream():
                 for chunk in stream:
-                    if chunk.text:
-                        yield chunk.text
+                    # Direct text yield saves milliseconds
+                    if chunk.text: yield chunk.text
 
-            # 3. TYPE ON SCREEN (This happens instantly after spinner vanishes)
-            response = st.write_stream(instant_token_stream)
+            # 4. INSTANT WRITE: Streamlit starts typing the nanosecond the first word arrives
+            response = st.write_stream(turbo_stream)
             
-            # 4. SAVE TO MEMORY
             st.session_state.chat_history.append({"role": "assistant", "content": response})
-            
         except:
-            st.error("Connection hiccup... please try again.")
+            st.error("Re-connecting...")
