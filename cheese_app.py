@@ -62,62 +62,56 @@ with col2:
 st.markdown("---")
 
 
-# --- 1. HYPER-THREADED DATA LOADER (Fastest Possible) ---
+# --- 1. OPTIMIZED PARALLEL SCRAPER (Max Speed) ---
 @st.cache_resource(ttl=3600) 
 def setup_ai_resources():
-    # Helper to scrape one URL
     def fetch_url(url):
         try:
-            # Short timeout, fast User Agent
-            r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=3)
+            # 2-second timeout for rapid failover
+            r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=2)
             soup = BeautifulSoup(r.content, 'html.parser')
-            # Only keep the most valuable text (P, DIV, H1-H6)
-            text_blobs = [t.get_text() for t in soup.find_all(['p', 'h1', 'h2', 'h3', 'div'])]
-            raw = " ".join(text_blobs)
-            clean = re.sub(r'\s+', ' ', raw)[:4500]
-            return f"SOURCE: {url} | DATA: {clean}\n"
+            # Only text, no tags. Compress spaces. Max 3500 chars to save bandwidth.
+            clean = re.sub(r'\s+', ' ', soup.get_text(' ', strip=True))[:3500]
+            return f"DATA [{url}]: {clean}\n"
         except: return ""
 
-    # Target Pages
+    # Priority Pages
     urls = [
         "https://hcmakers.com/", 
-        "https://hcmakers.com/about-us/", # Award Info here
-        "https://hcmakers.com/quality/",   
+        "https://hcmakers.com/about-us/", # Critical for awards/accuracy
         "https://hcmakers.com/products/", 
         "https://hcmakers.com/contact-us/",
         "https://hcmakers.com/category-knowledge/"
     ]
     
-    web_context = ""
-    # Parallel Processing: Fetch all URLs at the EXACT same time
+    # Threaded Fetching
     with concurrent.futures.ThreadPoolExecutor() as executor:
         results = list(executor.map(fetch_url, urls))
         web_context = "".join(results)
 
-    # Load PDFs
+    # PDFs
     pdfs = []
-    local_files = glob.glob("*.pdf")
-    for f in local_files:
+    for f in glob.glob("*.pdf"):
         try: pdfs.append(genai.upload_file(f))
         except: pass
     
-    # Precise System Instructions
+    # Streamlined System Prompt
     system_instruction = f"""
-    You are the Senior Sales AI for "Hispanic Cheese Makers-Nuestro Queso".
-    KNOWLEDGE BASE: {web_context}
+    Role: Sales AI for "Hispanic Cheese Makers-Nuestro Queso".
+    Context: {web_context}
     
-    CRITICAL INSTRUCTIONS:
-    1. **ACCURACY CHECK**: You must ONLY use the KNOWLEDGE BASE text above and attached PDFs. 
-    2. **AWARDS/MEDALS**: Do not use your own training data about medal counts. If the exact number isn't in the text, say: "We are an award-winning cheese manufacturer," and refer to the website.
-    3. **VIDEO**: Link to: https://hcmakers.com/category-knowledge/ if asked.
-    4. **CONTACT**: Plant: Kent, IL (752 N. Kent Road). Phone: 847-258-0375.
-    5. **NO IMAGES**: Text only.
+    RULES:
+    1. TRUTH CHECK: Use ONLY the provided Context and PDFs.
+    2. ACCURACY: Do not hallucinate old award counts. If specific stats (like "21 medals") aren't in the text, refer generally to "Industry Awards" or the About Us page.
+    3. MEDIA: For videos/trends -> https://hcmakers.com/category-knowledge/
+    4. CONTACT: 752 N. Kent Road, Kent, IL | 847-258-0375.
+    5. STYLE: Text only. No images. Fast, direct answers.
     """
 
     return system_instruction, pdfs
 
 # --- INITIALIZATION ---
-# Using spinner only on first boot
+# Using spinner only on cold boot
 with st.spinner("Initializing System..."):
     sys_prompt, ai_files = setup_ai_resources()
 
@@ -132,8 +126,6 @@ model = genai.GenerativeModel(
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
-
-# --- DISPLAY HISTORY ---
 for message in st.session_state.chat_history:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
@@ -151,16 +143,17 @@ if prompt := st.chat_input("How can I help you? / ¿Cómo te puedo ayudar?"):
         request_payload = ai_files + [prompt]
         
         try:
-            # Spinner visible while connecting, vanishes instantly on first token
+            # Brief visual feedback
             with st.spinner("Thinking..."):
+                # Stream start
                 stream = model.generate_content(request_payload, stream=True)
                 
-            def lightning_stream():
+            def turbo_stream():
                 for chunk in stream:
                     if chunk.text: yield chunk.text
 
-            response = st.write_stream(lightning_stream)
+            response = st.write_stream(turbo_stream)
             st.session_state.chat_history.append({"role": "assistant", "content": response})
             
         except:
-            st.error("Connection refreshing...")
+            st.error("Re-connecting...")
