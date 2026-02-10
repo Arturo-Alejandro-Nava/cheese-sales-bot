@@ -60,71 +60,78 @@ with col2:
 st.markdown("---")
 
 
-# --- 3. SONIC-SPEED DATA ENGINE ---
+# --- 3. HIGH-VELOCITY DATA ENGINE ---
 @st.cache_resource(ttl=1800) 
-def load_data_engine():
-    # TCP Pooling for instant handshake
+def build_instant_brain():
+    # TCP Pooling for instant handshake (Speed)
     session = requests.Session()
-    adapter = requests.adapters.HTTPAdapter(pool_connections=5, pool_maxsize=5)
+    adapter = requests.adapters.HTTPAdapter(pool_connections=10, pool_maxsize=10)
     session.mount('https://', adapter)
     
-    def scrape_micro(url):
+    def scrape(url):
         try:
-            # 0.8s TIMEOUT: If it lags, we leave.
-            r = session.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=0.8)
+            # 1.0 second limit per page
+            r = session.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=1.0)
             soup = BeautifulSoup(r.content, 'html.parser')
             
             # Kill bloat
-            for x in soup(["script", "style", "nav", "footer", "form", "svg"]):
-                x.decompose()
-                
-            # Limit to 1500 chars (Top-Level Data Only) for maximum CPU speed
-            clean = re.sub(r'\s+', ' ', soup.get_text(' ', strip=True))[:1500]
-            return f"[{url}]: {clean}\n"
+            for trash in soup(["script", "style", "nav", "footer", "form", "svg"]):
+                trash.decompose()
+            
+            # Smart cleaning that preserves numbers (Medal Counts)
+            text = soup.get_text(separator=' ', strip=True)
+            clean = re.sub(r'\s+', ' ', text)[:2500]
+            return f"INFO [{url}]: {clean}\n"
         except: return ""
 
-    # Live Website
+    # Live Website Scrape Target
     urls = [
         "https://hcmakers.com/", 
-        "https://hcmakers.com/about-us/", 
+        "https://hcmakers.com/about-us/", # Contains Award history
         "https://hcmakers.com/products/", 
         "https://hcmakers.com/contact-us/",
         "https://hcmakers.com/category-knowledge/"
     ]
     
-    # Run all simultaneously
+    # Threaded Fetching
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        results = list(executor.map(scrape_micro, urls))
+        results = list(executor.map(scrape, urls))
         web_context = "".join(results)
 
-    # Local PDF Files
+    # Local PDF Load
     pdfs = []
     for f in glob.glob("*.pdf"):
         try: pdfs.append(genai.upload_file(f))
         except: pass
     
-    # "Caveman" Instructions: Fewer words = Faster AI processing
+    # SYSTEM PROMPT (The "Safety" Logic)
     sys_instruction = f"""
-    Role: Sales AI for Hispanic Cheese Makers-Nuestro Queso.
-    Data: {web_context}
+    You are the Sales AI for Hispanic Cheese Makers-Nuestro Queso.
+    LIVE DATA: {web_context}
     
-    FAST RULES:
-    1. MATCH USER LANG (Esp/Eng).
-    2. BE DIRECT.
-    3. VIDEOS: https://hcmakers.com/category-knowledge/
-    4. MEDALS: Mention "Multiple Industry Awards".
-    5. SPECS: Use PDFs.
-    6. TEXT ONLY.
+    STRICT RULES:
+    1. **LANGUAGE**: If user speaks Spanish, Reply Spanish. If English, Reply English.
+    2. **LINKS**: DO NOT generate PDF links. They break. 
+       - If user asks for Catalog/Docs -> Link: "https://hcmakers.com/resources/"
+       - If user asks for Video -> Link: "https://hcmakers.com/category-knowledge/"
+    3. **MEDALS/AWARDS**: Check the text provided. Mention specific awards found (like American Cheese Society).
+    4. **ACCURACY**: Use the PDF files I provided for numbers (Protein, Dimensions).
+    5. **SPEED**: Answer directly. No fluff words.
+    6. **NO IMAGES**.
     """
     return sys_instruction, pdfs
 
 
-# --- 4. ENGINE INIT ---
-with st.spinner("Loading..."):
-    sys_prompt, ai_files = load_data_engine()
+# --- 4. ENGINE INIT (Once per reboot) ---
+with st.spinner("Ready..."):
+    sys_prompt, ai_files = build_instant_brain()
 
-# Speed Config
-config = genai.types.GenerationConfig(temperature=0.0, candidate_count=1)
+# Temperature 0.0 forces the AI to choose the fastest logical answer
+# candidate_count=1 prevents it from "considering alternatives"
+config = genai.types.GenerationConfig(
+    temperature=0.0, 
+    candidate_count=1
+)
 
 model = genai.GenerativeModel(
     model_name='gemini-2.0-flash',
@@ -133,7 +140,7 @@ model = genai.GenerativeModel(
 )
 
 
-# --- 5. CHAT UI ---
+# --- 5. UI ---
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
@@ -150,20 +157,20 @@ if prompt := st.chat_input("How can I help you? / ¿Cómo te puedo ayudar?"):
     st.session_state.chat_history.append({"role": "user", "content": prompt})
 
     with st.chat_message("assistant"):
-        req = ai_files + [prompt]
+        req_content = ai_files + [prompt]
         
         try:
-            # SPINNER: Only exists for the tiny network gap.
+            # Minimal spinner duration
             with st.spinner("Thinking..."):
-                stream = model.generate_content(req, stream=True)
+                stream = model.generate_content(req_content, stream=True)
             
-            # YIELD: Instantly passes letters to screen.
-            def fast_yield():
+            # Pipe tokens to screen immediately
+            def pipe():
                 for chunk in stream:
                     if chunk.text: yield chunk.text
 
-            response = st.write_stream(fast_yield)
+            response = st.write_stream(pipe)
             st.session_state.chat_history.append({"role": "assistant", "content": response})
             
         except:
-            st.error("...")
+            st.write("...")
