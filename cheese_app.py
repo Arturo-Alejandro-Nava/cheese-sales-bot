@@ -22,7 +22,7 @@ except:
 genai.configure(api_key=API_KEY)
 
 
-# --- 2. VISUAL HEADER ---
+# --- 2. UI HEADER (Lightweight) ---
 col1, col2, col3 = st.columns([1, 10, 1])
 with col2:
     sub_col1, sub_col2, sub_col3 = st.columns([2, 1, 2])
@@ -60,76 +60,88 @@ with col2:
 st.markdown("---")
 
 
-# --- 3. PARALLEL DATA LOADER (THE SPEED ENGINE) ---
-# TTL=1800 means it updates from the live website every 30 minutes
+# --- 3. HIGH-VELOCITY DATA ENGINE ---
+# Updates from website every 30 minutes (TTL 1800)
 @st.cache_resource(ttl=1800) 
-def build_live_brain():
+def load_hyper_brain():
     
-    # 1. SCRAPER FUNCTION (Stripped for speed)
-    def fetch_data(url):
+    # Session Object for Connection Pooling (Speed Trick)
+    session = requests.Session()
+    adapter = requests.adapters.HTTPAdapter(pool_connections=5, pool_maxsize=5)
+    session.mount('https://', adapter)
+    
+    def scrape_lean(url):
         try:
-            # 2 second timeout - if a page lags, drop it to save speed
-            r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=2)
+            # 1.5s timeout: Speed is priority.
+            r = session.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=1.5)
             soup = BeautifulSoup(r.content, 'html.parser')
-            # Extract text -> Remove tabs/newlines -> Limit to 3000 chars
-            clean = re.sub(r'\s+', ' ', soup.get_text(' ', strip=True))[:3000]
-            return f"SOURCE: {url} | DATA: {clean}\n"
+            
+            # AGGRESSIVE CLEANING: Remove menus, scripts, styles to reduce token load
+            for element in soup(["script", "style", "nav", "footer", "header"]):
+                element.decompose()
+            
+            # Limit to 2000 chars per page to force speed
+            text = re.sub(r'\s+', ' ', soup.get_text(' ', strip=True))[:2000]
+            return f"[{url}]: {text}\n"
         except: return ""
 
-    # 2. TARGET LIST
+    # Priority Pages
     urls = [
         "https://hcmakers.com/", 
+        "https://hcmakers.com/about-us/", # Award Info
         "https://hcmakers.com/products/", 
-        "https://hcmakers.com/capabilities/",
         "https://hcmakers.com/contact-us/",
-        "https://hcmakers.com/about-us/",
         "https://hcmakers.com/category-knowledge/"
     ]
     
-    # 3. PARALLEL EXECUTION (This runs all URLs simultaneously)
+    # Multi-Threaded Scraping
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        results = list(executor.map(fetch_data, urls))
-        web_knowledge = "".join(results)
+        results = list(executor.map(scrape_lean, urls))
+        web_context = "".join(results)
 
-    # 4. LOAD PDFS (These update whenever you push to GitHub)
+    # PDF Loader (From GitHub)
     pdfs = []
-    local_files = glob.glob("*.pdf")
-    for f in local_files:
+    for f in glob.glob("*.pdf"):
         try: pdfs.append(genai.upload_file(f))
         except: pass
-
-    # 5. PRE-COMPILED SYSTEM INSTRUCTIONS
-    # We bake the rules in here to save processing time later
+        
+    # Micro-Instructions (Fewer words for AI to process)
     sys_instruction = f"""
-    You are the Senior Sales AI for "Hispanic Cheese Makers-Nuestro Queso".
+    Role: Senior Sales AI for Hispanic Cheese Makers-Nuestro Queso.
+    Knowledge: {web_context}
     
-    LIVE WEBSITE DATA:
-    {web_knowledge}
-    
-    RULES:
-    1. **VIDEO LINKS**: If asked about video/trends, Reply: "View our Knowledge Hub videos: https://hcmakers.com/category-knowledge/"
-    2. **CONTACT**: Plant: 752 N. Kent Road, Kent, IL. Phone: 847-258-0375.
-    3. **DATA**: Use the PDFs attached for spec numbers.
-    4. **NO IMAGES**: Text only.
-    5. **LANGUAGE**: Detect input language (En/Es) and reply in same language.
+    SPEED RULES:
+    1. INPUT LANGUAGE = OUTPUT LANGUAGE.
+    2. BE DIRECT. Answer immediately. No fluff.
+    3. VIDEOS: Link -> https://hcmakers.com/category-knowledge/
+    4. MEDALS: Mention "Multiple Industry Awards" if exact count unknown.
+    5. DATA: Use attached PDFs.
+    6. TEXT ONLY.
     """
     
     return sys_instruction, pdfs
 
 
-# --- 4. STARTUP (Runs Once) ---
-# Visual feedback only happens on first load
-with st.spinner("Connecting to Live Data..."):
-    sys_prompt, ai_files = build_live_brain()
+# --- 4. ENGINE START ---
+# Initial load
+with st.spinner("Connecting..."):
+    sys_prompt, ai_files = load_hyper_brain()
 
-# Load the "Flash" Model (Fastest)
+# SPEED CONFIGURATION: Temperature 0.0 forces "Greedy Decoding" (Fastest math)
+fast_config = genai.types.GenerationConfig(
+    temperature=0.0,
+    candidate_count=1,
+    max_output_tokens=500
+)
+
 model = genai.GenerativeModel(
     model_name='gemini-2.0-flash',
-    system_instruction=sys_prompt
+    system_instruction=sys_prompt,
+    generation_config=fast_config
 )
 
 
-# --- 5. CHAT ENGINE ---
+# --- 5. UI & CHAT ---
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
@@ -138,7 +150,7 @@ for message in st.session_state.chat_history:
         st.markdown(message["content"])
 
 
-# --- 6. INSTANT RESPONSE LOOP ---
+# --- 6. ZERO-LAG RESPONSE LOOP ---
 if prompt := st.chat_input("How can I help you? / ¿Cómo te puedo ayudar?"):
     
     with st.chat_message("user"):
@@ -147,22 +159,20 @@ if prompt := st.chat_input("How can I help you? / ¿Cómo te puedo ayudar?"):
 
 
     with st.chat_message("assistant"):
-        
-        # Prepare content (Only variable data is the question now)
-        request_content = ai_files + [prompt]
+        request_payload = ai_files + [prompt]
         
         try:
-            # Shortest possible "Thinking" time
+            # Thinking text appears instantly
             with st.spinner("Thinking..."):
-                stream = model.generate_content(request_content, stream=True)
-            
-            # Direct yield to screen
-            def lightning_stream():
+                stream = model.generate_content(request_payload, stream=True)
+                
+            # Direct Pipe: Yield text to screen the millisecond it arrives
+            def raw_pipe():
                 for chunk in stream:
                     if chunk.text: yield chunk.text
 
-            response = st.write_stream(lightning_stream)
+            response = st.write_stream(raw_pipe)
             st.session_state.chat_history.append({"role": "assistant", "content": response})
             
         except:
-            st.error("Connection reset.")
+            st.error("Reloading...")
