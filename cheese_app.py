@@ -60,20 +60,20 @@ with col2:
 st.markdown("---")
 
 
-# --- 3. HIGH-SPEED DATA LOADER ---
+# --- 3. ULTRA-FAST DATA LOADER ---
 @st.cache_resource(ttl=3600) 
 def setup_brain_fast():
     def scrape_url(url):
         try:
-            # 1.5s timeout for ultra-fast scraping
-            r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=1.5)
+            # 1 SECOND Timeout. If site lags, skip it to save speed.
+            r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=1)
             soup = BeautifulSoup(r.content, 'html.parser')
-            # Strips ALL fluff. Limits to 2500 chars per page to boost speed.
-            clean = re.sub(r'\s+', ' ', soup.get_text(' ', strip=True))[:2500]
+            # 2000 char limit = Lighter Brain = Faster Response
+            clean = re.sub(r'\s+', ' ', soup.get_text(' ', strip=True))[:2000]
             return f"[{url}]: {clean}\n"
         except: return ""
 
-    # Targeted Pages (Only the ones that matter)
+    # Essential Pages Only
     urls = [
         "https://hcmakers.com/", 
         "https://hcmakers.com/about-us/", 
@@ -82,44 +82,47 @@ def setup_brain_fast():
         "https://hcmakers.com/category-knowledge/"
     ]
     
-    # Parallel Processing
     with concurrent.futures.ThreadPoolExecutor() as executor:
         results = list(executor.map(scrape_url, urls))
         web_context = "".join(results)
 
-    # PDF Loading
     pdfs = []
     local_pdfs = glob.glob("*.pdf")
     for f in local_pdfs:
         try: pdfs.append(genai.upload_file(f))
         except: pass
     
-    # Minimalist System Prompt (Smaller = Faster)
+    # Lean Instructions
     sys_instruction = f"""
-    Role: Senior Sales AI for Hispanic Cheese Makers-Nuestro Queso.
+    Role: Sales AI for Hispanic Cheese Makers-Nuestro Queso.
     Knowledge Base: {web_context}
     
-    FAST RULES:
-    1. IF SPANISH -> SPANISH. IF ENGLISH -> ENGLISH.
-    2. BE DIRECT. Skip polite filler ("Hello! That is a great question"). Just answer.
-    3. VIDEOS -> https://hcmakers.com/category-knowledge/
-    4. DATA -> Use PDFs for specs.
-    5. CONTACT -> 752 N. Kent Road, Kent, IL | 847-258-0375.
-    6. MEDALS -> Refer to "Numerous Industry Awards" unless exact count is known.
-    7. NO IMAGES.
+    RULES:
+    1. **LANGUAGE**: Input English -> Output English. Input Spanish -> Output Spanish.
+    2. **VIDEO**: If topic is video/trends -> Link: https://hcmakers.com/category-knowledge/
+    3. **MEDALS**: Say "Award-winning cheeses" (check website for details).
+    4. **DATA**: Use PDFs for spec numbers.
+    5. **NO IMAGES**.
     """
 
     return sys_instruction, pdfs
 
-# --- 4. MODEL INITIALIZATION ---
-# Loading only happens ONCE.
+# --- 4. MODEL INIT (The Speed Hack) ---
 with st.spinner("Connecting..."):
     sys_prompt, ai_files = setup_brain_fast()
 
-# Initialize Flash Model
+# GenerationConfig with temperature=0.0 makes the AI stop "thinking" about creativity 
+# and just select the most logical answer immediately.
+speed_config = genai.types.GenerationConfig(
+    temperature=0.0,
+    max_output_tokens=300, # Keeps answers punchy
+    candidate_count=1
+)
+
 model = genai.GenerativeModel(
     model_name='gemini-2.0-flash',
-    system_instruction=sys_prompt
+    system_instruction=sys_prompt,
+    generation_config=speed_config
 )
 
 
@@ -132,7 +135,7 @@ for message in st.session_state.chat_history:
         st.markdown(message["content"])
 
 
-# --- 6. FAST INPUT & RESPONSE ---
+# --- 6. ZERO-LATENCY RESPONSE ---
 if prompt := st.chat_input("How can I help you? / ¿Cómo te puedo ayudar?"):
     
     with st.chat_message("user"):
@@ -143,18 +146,17 @@ if prompt := st.chat_input("How can I help you? / ¿Cómo te puedo ayudar?"):
         request_payload = ai_files + [prompt]
         
         try:
-            # "Thinking" shows for milliseconds
+            # Spinner acts as instant visual feedback
             with st.spinner("Thinking..."):
                 stream = model.generate_content(request_payload, stream=True)
             
-            # Instant Token Yielder
-            def hyper_speed_stream():
+            # Bare metal iterator (No logic slowing it down)
+            def raw_stream():
                 for chunk in stream:
                     if chunk.text: yield chunk.text
 
-            # Streamlit types immediately
-            response = st.write_stream(hyper_speed_stream)
+            response = st.write_stream(raw_stream)
             st.session_state.chat_history.append({"role": "assistant", "content": response})
             
         except:
-            st.error("Reconnect...")
+            st.error("Connection reset.")
