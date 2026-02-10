@@ -60,78 +60,72 @@ with col2:
 st.markdown("---")
 
 
-# --- 3. HIGH-VELOCITY DATA ENGINE ---
+# --- 3. FEATHERWEIGHT DATA ENGINE ---
 @st.cache_resource(ttl=1800) 
-def build_instant_brain():
-    # TCP Pooling for instant handshake (Speed)
+def load_feather_brain():
+    # TCP Connection Pooling
     session = requests.Session()
     adapter = requests.adapters.HTTPAdapter(pool_connections=10, pool_maxsize=10)
     session.mount('https://', adapter)
     
-    def scrape(url):
+    def scrape_light(url):
         try:
-            # 1.0 second limit per page
-            r = session.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=1.0)
+            # 0.8s Timeout (Zero Tolerance for Lag)
+            r = session.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=0.8)
             soup = BeautifulSoup(r.content, 'html.parser')
             
-            # Kill bloat
-            for trash in soup(["script", "style", "nav", "footer", "form", "svg"]):
-                trash.decompose()
+            # Massive De-bloating
+            # Removes all interactive elements to focus purely on text data
+            for x in soup(["script", "style", "nav", "footer", "form", "svg", "noscript", "iframe"]):
+                x.decompose()
             
-            # Smart cleaning that preserves numbers (Medal Counts)
+            # Reduce context window to 1500 chars to increase processing speed
             text = soup.get_text(separator=' ', strip=True)
-            clean = re.sub(r'\s+', ' ', text)[:2500]
+            clean = re.sub(r'\s+', ' ', text)[:1500]
             return f"INFO [{url}]: {clean}\n"
         except: return ""
 
-    # Live Website Scrape Target
+    # Scrape Targets
     urls = [
         "https://hcmakers.com/", 
-        "https://hcmakers.com/about-us/", # Contains Award history
+        "https://hcmakers.com/about-us/", 
         "https://hcmakers.com/products/", 
         "https://hcmakers.com/contact-us/",
         "https://hcmakers.com/category-knowledge/"
     ]
     
-    # Threaded Fetching
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        results = list(executor.map(scrape, urls))
+        results = list(executor.map(scrape_light, urls))
         web_context = "".join(results)
 
-    # Local PDF Load
+    # PDFs
     pdfs = []
     for f in glob.glob("*.pdf"):
         try: pdfs.append(genai.upload_file(f))
         except: pass
     
-    # SYSTEM PROMPT (The "Safety" Logic)
+    # Minimalist Instruction Set (Processing speed optimized)
     sys_instruction = f"""
     You are the Sales AI for Hispanic Cheese Makers-Nuestro Queso.
     LIVE DATA: {web_context}
     
-    STRICT RULES:
-    1. **LANGUAGE**: If user speaks Spanish, Reply Spanish. If English, Reply English.
-    2. **LINKS**: DO NOT generate PDF links. They break. 
-       - If user asks for Catalog/Docs -> Link: "https://hcmakers.com/resources/"
-       - If user asks for Video -> Link: "https://hcmakers.com/category-knowledge/"
-    3. **MEDALS/AWARDS**: Check the text provided. Mention specific awards found (like American Cheese Society).
-    4. **ACCURACY**: Use the PDF files I provided for numbers (Protein, Dimensions).
-    5. **SPEED**: Answer directly. No fluff words.
-    6. **NO IMAGES**.
+    RULES:
+    1. **LANGUAGE**: Output in same language as input.
+    2. **LINKS**: No broken links. For docs -> https://hcmakers.com/resources/. For Videos -> https://hcmakers.com/category-knowledge/
+    3. **MEDALS**: Reference "21+ Awards" / "Industry Gold Medals".
+    4. **SPEED**: Answer directly.
+    5. **NO IMAGES**.
     """
     return sys_instruction, pdfs
 
 
-# --- 4. ENGINE INIT (Once per reboot) ---
-with st.spinner("Ready..."):
-    sys_prompt, ai_files = build_instant_brain()
+# --- 4. STARTUP ---
+# Only happens once on deploy
+with st.spinner("Connected."):
+    sys_prompt, ai_files = load_feather_brain()
 
-# Temperature 0.0 forces the AI to choose the fastest logical answer
-# candidate_count=1 prevents it from "considering alternatives"
-config = genai.types.GenerationConfig(
-    temperature=0.0, 
-    candidate_count=1
-)
+# Greedy Configuration (Temperature 0)
+config = genai.types.GenerationConfig(temperature=0.0, candidate_count=1)
 
 model = genai.GenerativeModel(
     model_name='gemini-2.0-flash',
@@ -160,17 +154,15 @@ if prompt := st.chat_input("How can I help you? / ¿Cómo te puedo ayudar?"):
         req_content = ai_files + [prompt]
         
         try:
-            # Minimal spinner duration
-            with st.spinner("Thinking..."):
-                stream = model.generate_content(req_content, stream=True)
+            # NO visual spinner anymore. Text starts arriving immediately.
+            stream = model.generate_content(req_content, stream=True)
             
-            # Pipe tokens to screen immediately
-            def pipe():
+            def immediate_yield():
                 for chunk in stream:
                     if chunk.text: yield chunk.text
 
-            response = st.write_stream(pipe)
+            response = st.write_stream(immediate_yield)
             st.session_state.chat_history.append({"role": "assistant", "content": response})
             
         except:
-            st.write("...")
+            st.error("...")
