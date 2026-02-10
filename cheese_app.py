@@ -60,29 +60,30 @@ with col2:
 st.markdown("---")
 
 
-# --- 3. ZERO-LAG DATA ENGINE ---
+# --- 3. SONIC-SPEED DATA ENGINE ---
 @st.cache_resource(ttl=1800) 
-def build_brain():
-    # Use Session to keep TCP connection alive (Speed Hack)
+def load_data_engine():
+    # TCP Pooling for instant handshake
     session = requests.Session()
     adapter = requests.adapters.HTTPAdapter(pool_connections=5, pool_maxsize=5)
     session.mount('https://', adapter)
     
-    def scrape(url):
+    def scrape_micro(url):
         try:
-            # 1.0 second timeout. Speed is king.
-            r = session.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=1.0)
+            # 0.8s TIMEOUT: If it lags, we leave.
+            r = session.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=0.8)
             soup = BeautifulSoup(r.content, 'html.parser')
             
-            # Kill slow/heavy tags immediately
-            for trash in soup(["script", "style", "nav", "footer", "iframe"]):
-                trash.decompose()
-            
-            # Extract raw text & minify whitespace
-            text = re.sub(r'\s+', ' ', soup.get_text(' ', strip=True))[:2500]
-            return f"INFO [{url}]: {text}\n"
+            # Kill bloat
+            for x in soup(["script", "style", "nav", "footer", "form", "svg"]):
+                x.decompose()
+                
+            # Limit to 1500 chars (Top-Level Data Only) for maximum CPU speed
+            clean = re.sub(r'\s+', ' ', soup.get_text(' ', strip=True))[:1500]
+            return f"[{url}]: {clean}\n"
         except: return ""
 
+    # Live Website
     urls = [
         "https://hcmakers.com/", 
         "https://hcmakers.com/about-us/", 
@@ -91,39 +92,38 @@ def build_brain():
         "https://hcmakers.com/category-knowledge/"
     ]
     
-    # Execute scrapes in parallel (simultaneous)
+    # Run all simultaneously
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        results = list(executor.map(scrape, urls))
+        results = list(executor.map(scrape_micro, urls))
         web_context = "".join(results)
 
-    # Local PDFs
+    # Local PDF Files
     pdfs = []
     for f in glob.glob("*.pdf"):
         try: pdfs.append(genai.upload_file(f))
         except: pass
     
-    # Instruction optimized for short/fast output generation
+    # "Caveman" Instructions: Fewer words = Faster AI processing
     sys_instruction = f"""
-    You are the Sales AI for Hispanic Cheese Makers-Nuestro Queso.
-    LIVE DATA: {web_context}
+    Role: Sales AI for Hispanic Cheese Makers-Nuestro Queso.
+    Data: {web_context}
     
-    FAST RESPONSE RULES:
-    1. MATCH USER LANGUAGE (English/Spanish).
-    2. BE CONCISE (Avoid long paragraphs, answer directly).
-    3. VIDEOS: Link -> https://hcmakers.com/category-knowledge/
-    4. MEDALS: 21+ Medals/Awards (American Cheese Society Gold).
-    5. DATA: Use PDF tables.
+    FAST RULES:
+    1. MATCH USER LANG (Esp/Eng).
+    2. BE DIRECT.
+    3. VIDEOS: https://hcmakers.com/category-knowledge/
+    4. MEDALS: Mention "Multiple Industry Awards".
+    5. SPECS: Use PDFs.
     6. TEXT ONLY.
     """
     return sys_instruction, pdfs
 
 
-# --- 4. STARTUP ---
-# Only loads once
-with st.spinner("Connecting..."):
-    sys_prompt, ai_files = build_brain()
+# --- 4. ENGINE INIT ---
+with st.spinner("Loading..."):
+    sys_prompt, ai_files = load_data_engine()
 
-# Temperature 0.0 = Math over Creativity = Faster
+# Speed Config
 config = genai.types.GenerationConfig(temperature=0.0, candidate_count=1)
 
 model = genai.GenerativeModel(
@@ -133,7 +133,7 @@ model = genai.GenerativeModel(
 )
 
 
-# --- 5. CHAT ENGINE ---
+# --- 5. CHAT UI ---
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
@@ -150,19 +150,19 @@ if prompt := st.chat_input("How can I help you? / ¿Cómo te puedo ayudar?"):
     st.session_state.chat_history.append({"role": "user", "content": prompt})
 
     with st.chat_message("assistant"):
-        req_content = ai_files + [prompt]
+        req = ai_files + [prompt]
         
         try:
-            # SPINNER: Only exists while the signal travels. Vanishes immediately on first byte.
+            # SPINNER: Only exists for the tiny network gap.
             with st.spinner("Thinking..."):
-                stream = model.generate_content(req_content, stream=True)
+                stream = model.generate_content(req, stream=True)
             
-            # PURE PIPE: Delivers tokens to screen immediately without buffer
-            def rapid_yield():
+            # YIELD: Instantly passes letters to screen.
+            def fast_yield():
                 for chunk in stream:
                     if chunk.text: yield chunk.text
 
-            response = st.write_stream(rapid_yield)
+            response = st.write_stream(fast_yield)
             st.session_state.chat_history.append({"role": "assistant", "content": response})
             
         except:
