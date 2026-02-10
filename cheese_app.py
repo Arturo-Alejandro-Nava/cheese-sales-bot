@@ -7,7 +7,9 @@ import glob
 import re
 import concurrent.futures
 
-# --- CONFIGURATION (UNIVERSAL) ---
+# --- 1. CONFIGURATION (Must be first) ---
+st.set_page_config(page_title="Hispanic Cheese Makers", page_icon="🧀")
+
 try:
     if "GOOGLE_API_KEY" in os.environ:
         API_KEY = os.environ["GOOGLE_API_KEY"]
@@ -20,11 +22,7 @@ except:
 genai.configure(api_key=API_KEY)
 
 
-# --- WEBPAGE CONFIG ---
-st.set_page_config(page_title="Hispanic Cheese Makers", page_icon="🧀")
-
-
-# --- HEADER ---
+# --- 2. HEADER ---
 col1, col2, col3 = st.columns([1, 10, 1])
 with col2:
     sub_col1, sub_col2, sub_col3 = st.columns([2, 1, 2])
@@ -62,21 +60,21 @@ with col2:
 st.markdown("---")
 
 
-# --- 1. OPTIMIZED BRAIN (Parallel + Strict Lang) ---
+# --- 3. THE "INSTANT BRAIN" (Cached & Threaded) ---
 @st.cache_resource(ttl=3600) 
-def setup_ai_resources():
-    # 1. Scraping Function (Fastest Possible)
-    def fetch_url(url):
+def load_and_prepare_brain():
+    # Helper for fast parallel scraping
+    def scrape_url(url):
         try:
             r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=2)
             soup = BeautifulSoup(r.content, 'html.parser')
-            # Compress white space and limit char count for speed
-            clean = re.sub(r'\s+', ' ', soup.get_text(' ', strip=True))[:3500]
-            return f"[{url}]: {clean}\n"
+            # Strips heavy code, keeps only words, compresses whitespace
+            clean_text = re.sub(r'\s+', ' ', soup.get_text(' ', strip=True))[:4000]
+            return f"SOURCE: {url} | DATA: {clean_text}\n"
         except: return ""
 
-    # Target Pages
-    urls = [
+    # Priority Pages
+    target_urls = [
         "https://hcmakers.com/", 
         "https://hcmakers.com/about-us/", 
         "https://hcmakers.com/products/", 
@@ -84,53 +82,54 @@ def setup_ai_resources():
         "https://hcmakers.com/category-knowledge/"
     ]
     
-    # 2. Parallel Fetch (5x Faster than standard)
+    # 1. Parallel Fetch (All URLs at once)
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        results = list(executor.map(fetch_url, urls))
-        web_context = "".join(results)
+        results = list(executor.map(scrape_url, target_urls))
+        web_knowledge = "".join(results)
 
-    # 3. Load PDFs
+    # 2. Upload PDFs
     pdfs = []
-    for f in glob.glob("*.pdf"):
+    local_pdfs = glob.glob("*.pdf")
+    for f in local_pdfs:
         try: pdfs.append(genai.upload_file(f))
         except: pass
     
-    # 4. STRICT SYSTEM PROMPT
-    # We moved Language Rules to the TOP so the AI obeys them first.
+    # 3. Compile System Prompt (Pre-calc)
     system_instruction = f"""
     You are the Sales AI for "Hispanic Cheese Makers-Nuestro Queso".
     
-    *** CRITICAL LANGUAGE RULES ***
-    1. IF INPUT IS SPANISH -> RESPONSE MUST BE SPANISH.
-    2. IF INPUT IS ENGLISH -> RESPONSE MUST BE ENGLISH.
-    3. Do not mix languages. Match the user's language exactly.
+    KNOWLEDGE BASE:
+    {web_knowledge}
     
-    KNOWLEDGE BASE: 
-    {web_context}
+    STRICT RULES:
+    1. **LANGUAGE**: Detect the language of the user's message. 
+       - If English -> Respond in English.
+       - If Spanish -> Respond in Spanish.
+       
+    2. **VIDEO REQUESTS**: If asking about videos/trends, reply: "Check our Knowledge Hub here: https://hcmakers.com/category-knowledge/"
     
-    OPERATIONAL RULES:
-    1. TRUTH CHECK: Use ONLY the provided Knowledge Base and PDFs.
-    2. ACCURACY: Do not hallucinate. If you don't know the exact number of medals, say "We have won numerous industry awards" and refer to the website.
-    3. MEDIA: For videos/trends -> https://hcmakers.com/category-knowledge/
-    4. CONTACT: 752 N. Kent Road, Kent, IL | 847-258-0375.
-    5. NO IMAGES.
+    3. **CONTACT**: Plant: 752 N. Kent Road, Kent, IL | Phone: 847-258-0375.
+    
+    4. **ACCURACY**: Use the PDF tables for numbers (shelf life, protein, pack sizes). Do not hallucinate award numbers.
+    
+    5. **NO IMAGES**: Text only.
     """
 
     return system_instruction, pdfs
 
-# --- INITIALIZATION ---
-# Spinner only shows on cold boot/redeploy
-with st.spinner("System initializing..."):
-    sys_prompt, ai_files = setup_ai_resources()
+# --- 4. INITIALIZATION ---
+# Load logic only runs once. Subsequent chats skip this.
+with st.spinner("Connecting System..."):
+    sys_prompt, ai_files = load_and_prepare_brain()
 
-# Load Model
+# Configure model with persistent instructions
 model = genai.GenerativeModel(
     model_name='gemini-2.0-flash',
     system_instruction=sys_prompt
 )
 
 
-# --- CHAT ENGINE ---
+# --- 5. CHAT ENGINE ---
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
@@ -139,28 +138,32 @@ for message in st.session_state.chat_history:
         st.markdown(message["content"])
 
 
-# --- INPUT & RESPONSE ---
+# --- 6. INPUT & FAST RESPONSE ---
 if prompt := st.chat_input("How can I help you? / ¿Cómo te puedo ayudar?"):
     
+    # Show User Input
     with st.chat_message("user"):
         st.markdown(prompt)
     st.session_state.chat_history.append({"role": "user", "content": prompt})
 
-
+    # Generate Response
     with st.chat_message("assistant"):
-        request_payload = ai_files + [prompt]
+        # We only send the Files + New Question (System prompt is already inside model)
+        payload = ai_files + [prompt]
         
         try:
-            # Spinner acts as visual confirmation, vanishes instantly
-            with st.spinner("..."):
-                stream = model.generate_content(request_payload, stream=True)
+            # 1. "Thinking" Spinner appears for milliseconds
+            with st.spinner("Thinking..."):
+                stream = model.generate_content(payload, stream=True)
             
-            def turbo_stream():
+            # 2. Clean Stream (Removes Raw Data wrapper)
+            def fast_stream_cleaner():
                 for chunk in stream:
                     if chunk.text: yield chunk.text
 
-            response = st.write_stream(turbo_stream)
+            # 3. Streamlit types out result immediately
+            response = st.write_stream(fast_stream_cleaner)
             st.session_state.chat_history.append({"role": "assistant", "content": response})
             
         except:
-            st.error("Connection hiccup...")
+            st.error("One moment, reconnecting...")
