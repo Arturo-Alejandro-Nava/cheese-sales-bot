@@ -60,30 +60,29 @@ with col2:
 st.markdown("---")
 
 
-# --- 3. HIGH-SPEED DATA ENGINE ---
+# --- 3. ZERO-LAG DATA ENGINE ---
 @st.cache_resource(ttl=1800) 
-def load_data_engine():
-    # Session optimized for speed
+def build_brain():
+    # Use Session to keep TCP connection alive (Speed Hack)
     session = requests.Session()
-    adapter = requests.adapters.HTTPAdapter(pool_connections=10, pool_maxsize=10)
+    adapter = requests.adapters.HTTPAdapter(pool_connections=5, pool_maxsize=5)
     session.mount('https://', adapter)
     
-    def scrape_url(url):
+    def scrape(url):
         try:
-            # STRICT 1-SECOND TIMEOUT. 
-            # If the website hangs, we don't wait. We serve what we have.
-            r = session.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=1)
+            # 1.0 second timeout. Speed is king.
+            r = session.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=1.0)
             soup = BeautifulSoup(r.content, 'html.parser')
             
-            # Destroy layout tags to save bandwidth
-            for trash in soup(["script", "style", "nav", "footer", "form"]):
+            # Kill slow/heavy tags immediately
+            for trash in soup(["script", "style", "nav", "footer", "iframe"]):
                 trash.decompose()
-                
-            clean = re.sub(r'\s+', ' ', soup.get_text(' ', strip=True))[:3000]
-            return f"INFO [{url}]: {clean}\n"
+            
+            # Extract raw text & minify whitespace
+            text = re.sub(r'\s+', ' ', soup.get_text(' ', strip=True))[:2500]
+            return f"INFO [{url}]: {text}\n"
         except: return ""
 
-    # Live Website Links
     urls = [
         "https://hcmakers.com/", 
         "https://hcmakers.com/about-us/", 
@@ -92,50 +91,45 @@ def load_data_engine():
         "https://hcmakers.com/category-knowledge/"
     ]
     
-    # 1. Parallel Scrape
+    # Execute scrapes in parallel (simultaneous)
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        results = list(executor.map(scrape_url, urls))
+        results = list(executor.map(scrape, urls))
         web_context = "".join(results)
 
-    # 2. Local PDF Load (This checks for new files on every restart/redeploy)
+    # Local PDFs
     pdfs = []
     for f in glob.glob("*.pdf"):
         try: pdfs.append(genai.upload_file(f))
         except: pass
     
-    # 3. Fast-Read System Prompt
+    # Instruction optimized for short/fast output generation
     sys_instruction = f"""
-    You are the Sales AI for Hispanic Cheese Makers (Nuestro Queso).
+    You are the Sales AI for Hispanic Cheese Makers-Nuestro Queso.
+    LIVE DATA: {web_context}
     
-    CONTEXT FROM LIVE WEBSITE:
-    {web_context}
-    
-    RULES:
-    1. **LANGUAGE**: Answer in the same language as the user (English or Spanish).
-    2. **VIDEO**: Send to Knowledge Hub: https://hcmakers.com/category-knowledge/
-    3. **AWARDS**: Refer to "Industry Awards" (21+ medals) found in the text.
-    4. **DATA**: Use PDFs for specific numbers.
-    5. **NO IMAGES**.
+    FAST RESPONSE RULES:
+    1. MATCH USER LANGUAGE (English/Spanish).
+    2. BE CONCISE (Avoid long paragraphs, answer directly).
+    3. VIDEOS: Link -> https://hcmakers.com/category-knowledge/
+    4. MEDALS: 21+ Medals/Awards (American Cheese Society Gold).
+    5. DATA: Use PDF tables.
+    6. TEXT ONLY.
     """
     return sys_instruction, pdfs
 
 
 # --- 4. STARTUP ---
-# Only shows spinner on the very first boot.
+# Only loads once
 with st.spinner("Connecting..."):
-    sys_prompt, ai_files = load_data_engine()
+    sys_prompt, ai_files = build_brain()
 
-# Speed Config: Temp 0 = No creativity = Faster calculation
-speed_config = genai.types.GenerationConfig(
-    temperature=0.0,
-    candidate_count=1,
-    max_output_tokens=500
-)
+# Temperature 0.0 = Math over Creativity = Faster
+config = genai.types.GenerationConfig(temperature=0.0, candidate_count=1)
 
 model = genai.GenerativeModel(
     model_name='gemini-2.0-flash',
     system_instruction=sys_prompt,
-    generation_config=speed_config
+    generation_config=config
 )
 
 
@@ -148,7 +142,7 @@ for message in st.session_state.chat_history:
         st.markdown(message["content"])
 
 
-# --- 6. INSTANT RESPONSE UI ---
+# --- 6. INSTANT INTERACTION ---
 if prompt := st.chat_input("How can I help you? / ¿Cómo te puedo ayudar?"):
     
     with st.chat_message("user"):
@@ -156,21 +150,20 @@ if prompt := st.chat_input("How can I help you? / ¿Cómo te puedo ayudar?"):
     st.session_state.chat_history.append({"role": "user", "content": prompt})
 
     with st.chat_message("assistant"):
-        request_payload = ai_files + [prompt]
+        req_content = ai_files + [prompt]
         
         try:
-            # NOTE: We removed the visual spinner to make it feel snappier.
-            # The text will simply start appearing the moment it is ready.
+            # SPINNER: Only exists while the signal travels. Vanishes immediately on first byte.
+            with st.spinner("Thinking..."):
+                stream = model.generate_content(req_content, stream=True)
             
-            stream = model.generate_content(request_payload, stream=True)
-            
-            def pipe_stream():
+            # PURE PIPE: Delivers tokens to screen immediately without buffer
+            def rapid_yield():
                 for chunk in stream:
                     if chunk.text: yield chunk.text
 
-            # write_stream manages the typing effect
-            response = st.write_stream(pipe_stream)
+            response = st.write_stream(rapid_yield)
             st.session_state.chat_history.append({"role": "assistant", "content": response})
             
         except:
-            st.write("...")
+            st.error("...")
