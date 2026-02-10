@@ -7,7 +7,7 @@ import glob
 import re
 import concurrent.futures
 
-# --- 1. CONFIGURATION (Must be first) ---
+# --- 1. CONFIGURATION ---
 st.set_page_config(page_title="Hispanic Cheese Makers", page_icon="🧀")
 
 try:
@@ -60,21 +60,21 @@ with col2:
 st.markdown("---")
 
 
-# --- 3. THE "INSTANT BRAIN" (Cached & Threaded) ---
+# --- 3. HIGH-SPEED DATA LOADER ---
 @st.cache_resource(ttl=3600) 
-def load_and_prepare_brain():
-    # Helper for fast parallel scraping
+def setup_brain_fast():
     def scrape_url(url):
         try:
-            r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=2)
+            # 1.5s timeout for ultra-fast scraping
+            r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=1.5)
             soup = BeautifulSoup(r.content, 'html.parser')
-            # Strips heavy code, keeps only words, compresses whitespace
-            clean_text = re.sub(r'\s+', ' ', soup.get_text(' ', strip=True))[:4000]
-            return f"SOURCE: {url} | DATA: {clean_text}\n"
+            # Strips ALL fluff. Limits to 2500 chars per page to boost speed.
+            clean = re.sub(r'\s+', ' ', soup.get_text(' ', strip=True))[:2500]
+            return f"[{url}]: {clean}\n"
         except: return ""
 
-    # Priority Pages
-    target_urls = [
+    # Targeted Pages (Only the ones that matter)
+    urls = [
         "https://hcmakers.com/", 
         "https://hcmakers.com/about-us/", 
         "https://hcmakers.com/products/", 
@@ -82,47 +82,41 @@ def load_and_prepare_brain():
         "https://hcmakers.com/category-knowledge/"
     ]
     
-    # 1. Parallel Fetch (All URLs at once)
+    # Parallel Processing
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        results = list(executor.map(scrape_url, target_urls))
-        web_knowledge = "".join(results)
+        results = list(executor.map(scrape_url, urls))
+        web_context = "".join(results)
 
-    # 2. Upload PDFs
+    # PDF Loading
     pdfs = []
     local_pdfs = glob.glob("*.pdf")
     for f in local_pdfs:
         try: pdfs.append(genai.upload_file(f))
         except: pass
     
-    # 3. Compile System Prompt (Pre-calc)
-    system_instruction = f"""
-    You are the Sales AI for "Hispanic Cheese Makers-Nuestro Queso".
+    # Minimalist System Prompt (Smaller = Faster)
+    sys_instruction = f"""
+    Role: Senior Sales AI for Hispanic Cheese Makers-Nuestro Queso.
+    Knowledge Base: {web_context}
     
-    KNOWLEDGE BASE:
-    {web_knowledge}
-    
-    STRICT RULES:
-    1. **LANGUAGE**: Detect the language of the user's message. 
-       - If English -> Respond in English.
-       - If Spanish -> Respond in Spanish.
-       
-    2. **VIDEO REQUESTS**: If asking about videos/trends, reply: "Check our Knowledge Hub here: https://hcmakers.com/category-knowledge/"
-    
-    3. **CONTACT**: Plant: 752 N. Kent Road, Kent, IL | Phone: 847-258-0375.
-    
-    4. **ACCURACY**: Use the PDF tables for numbers (shelf life, protein, pack sizes). Do not hallucinate award numbers.
-    
-    5. **NO IMAGES**: Text only.
+    FAST RULES:
+    1. IF SPANISH -> SPANISH. IF ENGLISH -> ENGLISH.
+    2. BE DIRECT. Skip polite filler ("Hello! That is a great question"). Just answer.
+    3. VIDEOS -> https://hcmakers.com/category-knowledge/
+    4. DATA -> Use PDFs for specs.
+    5. CONTACT -> 752 N. Kent Road, Kent, IL | 847-258-0375.
+    6. MEDALS -> Refer to "Numerous Industry Awards" unless exact count is known.
+    7. NO IMAGES.
     """
 
-    return system_instruction, pdfs
+    return sys_instruction, pdfs
 
-# --- 4. INITIALIZATION ---
-# Load logic only runs once. Subsequent chats skip this.
-with st.spinner("Connecting System..."):
-    sys_prompt, ai_files = load_and_prepare_brain()
+# --- 4. MODEL INITIALIZATION ---
+# Loading only happens ONCE.
+with st.spinner("Connecting..."):
+    sys_prompt, ai_files = setup_brain_fast()
 
-# Configure model with persistent instructions
+# Initialize Flash Model
 model = genai.GenerativeModel(
     model_name='gemini-2.0-flash',
     system_instruction=sys_prompt
@@ -138,32 +132,29 @@ for message in st.session_state.chat_history:
         st.markdown(message["content"])
 
 
-# --- 6. INPUT & FAST RESPONSE ---
+# --- 6. FAST INPUT & RESPONSE ---
 if prompt := st.chat_input("How can I help you? / ¿Cómo te puedo ayudar?"):
     
-    # Show User Input
     with st.chat_message("user"):
         st.markdown(prompt)
     st.session_state.chat_history.append({"role": "user", "content": prompt})
 
-    # Generate Response
     with st.chat_message("assistant"):
-        # We only send the Files + New Question (System prompt is already inside model)
-        payload = ai_files + [prompt]
+        request_payload = ai_files + [prompt]
         
         try:
-            # 1. "Thinking" Spinner appears for milliseconds
+            # "Thinking" shows for milliseconds
             with st.spinner("Thinking..."):
-                stream = model.generate_content(payload, stream=True)
+                stream = model.generate_content(request_payload, stream=True)
             
-            # 2. Clean Stream (Removes Raw Data wrapper)
-            def fast_stream_cleaner():
+            # Instant Token Yielder
+            def hyper_speed_stream():
                 for chunk in stream:
                     if chunk.text: yield chunk.text
 
-            # 3. Streamlit types out result immediately
-            response = st.write_stream(fast_stream_cleaner)
+            # Streamlit types immediately
+            response = st.write_stream(hyper_speed_stream)
             st.session_state.chat_history.append({"role": "assistant", "content": response})
             
         except:
-            st.error("One moment, reconnecting...")
+            st.error("Reconnect...")
