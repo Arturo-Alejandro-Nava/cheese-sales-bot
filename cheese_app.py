@@ -61,18 +61,19 @@ st.markdown("---")
 
 
 # --- 3. HIGH-VELOCITY DATA ENGINE ---
-# Updates from website every 30 minutes (TTL 1800)
+# Updates from website every 30 minutes (TTL 1800) to keep speed MAX
 @st.cache_resource(ttl=1800) 
 def load_hyper_brain():
     
-    # Session Object for Connection Pooling (Speed Trick)
+    # Session Object for Connection Pooling (This is the speed trick)
+    # It re-uses the open internet tunnel instead of opening new ones.
     session = requests.Session()
     adapter = requests.adapters.HTTPAdapter(pool_connections=5, pool_maxsize=5)
     session.mount('https://', adapter)
     
     def scrape_lean(url):
         try:
-            # 1.5s timeout: Speed is priority.
+            # 1.5s timeout: Speed is priority. If a page hangs, drop it.
             r = session.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=1.5)
             soup = BeautifulSoup(r.content, 'html.parser')
             
@@ -80,21 +81,21 @@ def load_hyper_brain():
             for element in soup(["script", "style", "nav", "footer", "header"]):
                 element.decompose()
             
-            # Limit to 2000 chars per page to force speed
+            # Limit to 2000 chars per page to force Google to read faster
             text = re.sub(r'\s+', ' ', soup.get_text(' ', strip=True))[:2000]
             return f"[{url}]: {text}\n"
         except: return ""
 
-    # Priority Pages
+    # Critical Priority Pages
     urls = [
         "https://hcmakers.com/", 
-        "https://hcmakers.com/about-us/", # Award Info
+        "https://hcmakers.com/about-us/", # Award Info is here
         "https://hcmakers.com/products/", 
         "https://hcmakers.com/contact-us/",
         "https://hcmakers.com/category-knowledge/"
     ]
     
-    # Multi-Threaded Scraping
+    # Multi-Threaded Scraping (Do all 5 at once)
     with concurrent.futures.ThreadPoolExecutor() as executor:
         results = list(executor.map(scrape_lean, urls))
         web_context = "".join(results)
@@ -105,7 +106,7 @@ def load_hyper_brain():
         try: pdfs.append(genai.upload_file(f))
         except: pass
         
-    # Micro-Instructions (Fewer words for AI to process)
+    # Micro-Instructions (Fewer words for AI to process = Faster response)
     sys_instruction = f"""
     Role: Senior Sales AI for Hispanic Cheese Makers-Nuestro Queso.
     Knowledge: {web_context}
@@ -114,8 +115,8 @@ def load_hyper_brain():
     1. INPUT LANGUAGE = OUTPUT LANGUAGE.
     2. BE DIRECT. Answer immediately. No fluff.
     3. VIDEOS: Link -> https://hcmakers.com/category-knowledge/
-    4. MEDALS: Mention "Multiple Industry Awards" if exact count unknown.
-    5. DATA: Use attached PDFs.
+    4. MEDALS: Mention "Multiple Industry Awards" (Check website text for count).
+    5. DATA: Use attached PDFs for numbers.
     6. TEXT ONLY.
     """
     
@@ -123,15 +124,15 @@ def load_hyper_brain():
 
 
 # --- 4. ENGINE START ---
-# Initial load
+# Initial load only happens once per reboot
 with st.spinner("Connecting..."):
     sys_prompt, ai_files = load_hyper_brain()
 
-# SPEED CONFIGURATION: Temperature 0.0 forces "Greedy Decoding" (Fastest math)
+# SPEED CONFIGURATION: Temperature 0.0 forces "Greedy Decoding" (The fastest math path)
 fast_config = genai.types.GenerationConfig(
     temperature=0.0,
     candidate_count=1,
-    max_output_tokens=500
+    max_output_tokens=600 # Cap response size for speed
 )
 
 model = genai.GenerativeModel(
@@ -162,11 +163,11 @@ if prompt := st.chat_input("How can I help you? / ¿Cómo te puedo ayudar?"):
         request_payload = ai_files + [prompt]
         
         try:
-            # Thinking text appears instantly
+            # Spinner appears for milliseconds then vanishes
             with st.spinner("Thinking..."):
                 stream = model.generate_content(request_payload, stream=True)
                 
-            # Direct Pipe: Yield text to screen the millisecond it arrives
+            # Direct Pipe: Yield text to screen the MILLISECOND it arrives
             def raw_pipe():
                 for chunk in stream:
                     if chunk.text: yield chunk.text
