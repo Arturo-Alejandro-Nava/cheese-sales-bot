@@ -62,57 +62,65 @@ with col2:
 st.markdown("---")
 
 
-# --- 1. OPTIMIZED PARALLEL SCRAPER (Max Speed) ---
+# --- 1. OPTIMIZED BRAIN (Parallel + Strict Lang) ---
 @st.cache_resource(ttl=3600) 
 def setup_ai_resources():
+    # 1. Scraping Function (Fastest Possible)
     def fetch_url(url):
         try:
-            # 2-second timeout for rapid failover
             r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=2)
             soup = BeautifulSoup(r.content, 'html.parser')
-            # Only text, no tags. Compress spaces. Max 3500 chars to save bandwidth.
+            # Compress white space and limit char count for speed
             clean = re.sub(r'\s+', ' ', soup.get_text(' ', strip=True))[:3500]
-            return f"DATA [{url}]: {clean}\n"
+            return f"[{url}]: {clean}\n"
         except: return ""
 
-    # Priority Pages
+    # Target Pages
     urls = [
         "https://hcmakers.com/", 
-        "https://hcmakers.com/about-us/", # Critical for awards/accuracy
+        "https://hcmakers.com/about-us/", 
         "https://hcmakers.com/products/", 
         "https://hcmakers.com/contact-us/",
         "https://hcmakers.com/category-knowledge/"
     ]
     
-    # Threaded Fetching
+    # 2. Parallel Fetch (5x Faster than standard)
     with concurrent.futures.ThreadPoolExecutor() as executor:
         results = list(executor.map(fetch_url, urls))
         web_context = "".join(results)
 
-    # PDFs
+    # 3. Load PDFs
     pdfs = []
     for f in glob.glob("*.pdf"):
         try: pdfs.append(genai.upload_file(f))
         except: pass
     
-    # Streamlined System Prompt
+    # 4. STRICT SYSTEM PROMPT
+    # We moved Language Rules to the TOP so the AI obeys them first.
     system_instruction = f"""
-    Role: Sales AI for "Hispanic Cheese Makers-Nuestro Queso".
-    Context: {web_context}
+    You are the Sales AI for "Hispanic Cheese Makers-Nuestro Queso".
     
-    RULES:
-    1. TRUTH CHECK: Use ONLY the provided Context and PDFs.
-    2. ACCURACY: Do not hallucinate old award counts. If specific stats (like "21 medals") aren't in the text, refer generally to "Industry Awards" or the About Us page.
+    *** CRITICAL LANGUAGE RULES ***
+    1. IF INPUT IS SPANISH -> RESPONSE MUST BE SPANISH.
+    2. IF INPUT IS ENGLISH -> RESPONSE MUST BE ENGLISH.
+    3. Do not mix languages. Match the user's language exactly.
+    
+    KNOWLEDGE BASE: 
+    {web_context}
+    
+    OPERATIONAL RULES:
+    1. TRUTH CHECK: Use ONLY the provided Knowledge Base and PDFs.
+    2. ACCURACY: Do not hallucinate. If you don't know the exact number of medals, say "We have won numerous industry awards" and refer to the website.
     3. MEDIA: For videos/trends -> https://hcmakers.com/category-knowledge/
     4. CONTACT: 752 N. Kent Road, Kent, IL | 847-258-0375.
-    5. STYLE: Text only. No images. Fast, direct answers.
+    5. NO IMAGES.
     """
 
     return system_instruction, pdfs
 
 # --- INITIALIZATION ---
-# Using spinner only on cold boot
-with st.spinner("Initializing System..."):
+# Spinner only shows on cold boot/redeploy
+with st.spinner("System initializing..."):
     sys_prompt, ai_files = setup_ai_resources()
 
 # Load Model
@@ -143,11 +151,10 @@ if prompt := st.chat_input("How can I help you? / ¿Cómo te puedo ayudar?"):
         request_payload = ai_files + [prompt]
         
         try:
-            # Brief visual feedback
-            with st.spinner("Thinking..."):
-                # Stream start
+            # Spinner acts as visual confirmation, vanishes instantly
+            with st.spinner("..."):
                 stream = model.generate_content(request_payload, stream=True)
-                
+            
             def turbo_stream():
                 for chunk in stream:
                     if chunk.text: yield chunk.text
@@ -156,4 +163,4 @@ if prompt := st.chat_input("How can I help you? / ¿Cómo te puedo ayudar?"):
             st.session_state.chat_history.append({"role": "assistant", "content": response})
             
         except:
-            st.error("Re-connecting...")
+            st.error("Connection hiccup...")
