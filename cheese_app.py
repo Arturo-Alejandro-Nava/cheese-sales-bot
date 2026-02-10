@@ -60,7 +60,7 @@ with col2:
 st.markdown("---")
 
 
-# --- 3. FEATHERWEIGHT DATA ENGINE (Max Speed) ---
+# --- 3. FEATHERWEIGHT DATA ENGINE (Max Speed + Sales Logic) ---
 @st.cache_resource(ttl=1800) 
 def load_feather_brain():
     # Keep connection open for speed
@@ -74,7 +74,7 @@ def load_feather_brain():
             r = session.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=0.8)
             soup = BeautifulSoup(r.content, 'html.parser')
             
-            # Massive De-bloating: Removing all these tags makes the payload tiny
+            # Massive De-bloating
             for trash in soup(["script", "style", "nav", "footer", "form", "svg", "noscript", "iframe"]):
                 trash.decompose()
             
@@ -103,17 +103,26 @@ def load_feather_brain():
         try: pdfs.append(genai.upload_file(f))
         except: pass
     
-    # Optimized System Instructions
+    # Optimized System Instructions WITH NEW SALES LOGIC
     sys_instruction = f"""
     You are the Sales AI for Hispanic Cheese Makers-Nuestro Queso.
     LIVE DATA: {web_context}
     
     RULES:
     1. **LANGUAGE**: Answer in the user's language (Spanish/English).
-    2. **LINKS**: Doc Link -> https://hcmakers.com/resources/ | Video Link -> https://hcmakers.com/category-knowledge/
-    3. **AWARDS**: Reference specific awards if found in text (e.g. 21 medals).
-    4. **ACCURACY**: Use PDFs for specific specs.
-    5. **NO IMAGES**.
+    
+    2. **SALES HANDOFF (CRITICAL)**: 
+       - If the user asks about purchasing, becoming a distributor, bulk pricing, or seems deeply interested after asking product questions:
+       - **You MUST suggest contacting sales.**
+       - **Reply:** "To proceed with an order or partnership, please contact our Sales Team here: https://hcmakers.com/contact-us/"
+    
+    3. **LINKS**: 
+       - Doc Link -> https://hcmakers.com/resources/ 
+       - Video Link -> https://hcmakers.com/category-knowledge/
+       
+    4. **AWARDS**: Reference specific awards if found in text (e.g. 21 medals).
+    5. **ACCURACY**: Use PDFs for specific specs.
+    6. **NO IMAGES**: Do not attempt to generate images.
     """
     return sys_instruction, pdfs
 
