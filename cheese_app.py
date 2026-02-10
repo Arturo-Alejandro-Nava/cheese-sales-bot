@@ -22,7 +22,7 @@ except:
 genai.configure(api_key=API_KEY)
 
 
-# --- 2. HEADER ---
+# --- 2. VISUAL HEADER ---
 col1, col2, col3 = st.columns([1, 10, 1])
 with col2:
     sub_col1, sub_col2, sub_col3 = st.columns([2, 1, 2])
@@ -60,69 +60,72 @@ with col2:
 st.markdown("---")
 
 
-# --- 3. ULTRA-FAST DATA LOADER ---
-@st.cache_resource(ttl=3600) 
-def setup_brain_fast():
-    def scrape_url(url):
+# --- 3. PARALLEL DATA LOADER (THE SPEED ENGINE) ---
+# TTL=1800 means it updates from the live website every 30 minutes
+@st.cache_resource(ttl=1800) 
+def build_live_brain():
+    
+    # 1. SCRAPER FUNCTION (Stripped for speed)
+    def fetch_data(url):
         try:
-            # 1 SECOND Timeout. If site lags, skip it to save speed.
-            r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=1)
+            # 2 second timeout - if a page lags, drop it to save speed
+            r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=2)
             soup = BeautifulSoup(r.content, 'html.parser')
-            # 2000 char limit = Lighter Brain = Faster Response
-            clean = re.sub(r'\s+', ' ', soup.get_text(' ', strip=True))[:2000]
-            return f"[{url}]: {clean}\n"
+            # Extract text -> Remove tabs/newlines -> Limit to 3000 chars
+            clean = re.sub(r'\s+', ' ', soup.get_text(' ', strip=True))[:3000]
+            return f"SOURCE: {url} | DATA: {clean}\n"
         except: return ""
 
-    # Essential Pages Only
+    # 2. TARGET LIST
     urls = [
         "https://hcmakers.com/", 
-        "https://hcmakers.com/about-us/", 
         "https://hcmakers.com/products/", 
+        "https://hcmakers.com/capabilities/",
         "https://hcmakers.com/contact-us/",
+        "https://hcmakers.com/about-us/",
         "https://hcmakers.com/category-knowledge/"
     ]
     
+    # 3. PARALLEL EXECUTION (This runs all URLs simultaneously)
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        results = list(executor.map(scrape_url, urls))
-        web_context = "".join(results)
+        results = list(executor.map(fetch_data, urls))
+        web_knowledge = "".join(results)
 
+    # 4. LOAD PDFS (These update whenever you push to GitHub)
     pdfs = []
-    local_pdfs = glob.glob("*.pdf")
-    for f in local_pdfs:
+    local_files = glob.glob("*.pdf")
+    for f in local_files:
         try: pdfs.append(genai.upload_file(f))
         except: pass
-    
-    # Lean Instructions
+
+    # 5. PRE-COMPILED SYSTEM INSTRUCTIONS
+    # We bake the rules in here to save processing time later
     sys_instruction = f"""
-    Role: Sales AI for Hispanic Cheese Makers-Nuestro Queso.
-    Knowledge Base: {web_context}
+    You are the Senior Sales AI for "Hispanic Cheese Makers-Nuestro Queso".
+    
+    LIVE WEBSITE DATA:
+    {web_knowledge}
     
     RULES:
-    1. **LANGUAGE**: Input English -> Output English. Input Spanish -> Output Spanish.
-    2. **VIDEO**: If topic is video/trends -> Link: https://hcmakers.com/category-knowledge/
-    3. **MEDALS**: Say "Award-winning cheeses" (check website for details).
-    4. **DATA**: Use PDFs for spec numbers.
-    5. **NO IMAGES**.
+    1. **VIDEO LINKS**: If asked about video/trends, Reply: "View our Knowledge Hub videos: https://hcmakers.com/category-knowledge/"
+    2. **CONTACT**: Plant: 752 N. Kent Road, Kent, IL. Phone: 847-258-0375.
+    3. **DATA**: Use the PDFs attached for spec numbers.
+    4. **NO IMAGES**: Text only.
+    5. **LANGUAGE**: Detect input language (En/Es) and reply in same language.
     """
-
+    
     return sys_instruction, pdfs
 
-# --- 4. MODEL INIT (The Speed Hack) ---
-with st.spinner("Connecting..."):
-    sys_prompt, ai_files = setup_brain_fast()
 
-# GenerationConfig with temperature=0.0 makes the AI stop "thinking" about creativity 
-# and just select the most logical answer immediately.
-speed_config = genai.types.GenerationConfig(
-    temperature=0.0,
-    max_output_tokens=300, # Keeps answers punchy
-    candidate_count=1
-)
+# --- 4. STARTUP (Runs Once) ---
+# Visual feedback only happens on first load
+with st.spinner("Connecting to Live Data..."):
+    sys_prompt, ai_files = build_live_brain()
 
+# Load the "Flash" Model (Fastest)
 model = genai.GenerativeModel(
     model_name='gemini-2.0-flash',
-    system_instruction=sys_prompt,
-    generation_config=speed_config
+    system_instruction=sys_prompt
 )
 
 
@@ -135,27 +138,30 @@ for message in st.session_state.chat_history:
         st.markdown(message["content"])
 
 
-# --- 6. ZERO-LATENCY RESPONSE ---
+# --- 6. INSTANT RESPONSE LOOP ---
 if prompt := st.chat_input("How can I help you? / ¿Cómo te puedo ayudar?"):
     
     with st.chat_message("user"):
         st.markdown(prompt)
     st.session_state.chat_history.append({"role": "user", "content": prompt})
 
+
     with st.chat_message("assistant"):
-        request_payload = ai_files + [prompt]
+        
+        # Prepare content (Only variable data is the question now)
+        request_content = ai_files + [prompt]
         
         try:
-            # Spinner acts as instant visual feedback
+            # Shortest possible "Thinking" time
             with st.spinner("Thinking..."):
-                stream = model.generate_content(request_payload, stream=True)
+                stream = model.generate_content(request_content, stream=True)
             
-            # Bare metal iterator (No logic slowing it down)
-            def raw_stream():
+            # Direct yield to screen
+            def lightning_stream():
                 for chunk in stream:
                     if chunk.text: yield chunk.text
 
-            response = st.write_stream(raw_stream)
+            response = st.write_stream(lightning_stream)
             st.session_state.chat_history.append({"role": "assistant", "content": response})
             
         except:
