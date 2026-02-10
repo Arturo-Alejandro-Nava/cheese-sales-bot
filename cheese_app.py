@@ -60,32 +60,30 @@ with col2:
 st.markdown("---")
 
 
-# --- 3. FEATHERWEIGHT DATA ENGINE ---
+# --- 3. FEATHERWEIGHT DATA ENGINE (Max Speed) ---
 @st.cache_resource(ttl=1800) 
 def load_feather_brain():
-    # TCP Connection Pooling
+    # Keep connection open for speed
     session = requests.Session()
     adapter = requests.adapters.HTTPAdapter(pool_connections=10, pool_maxsize=10)
     session.mount('https://', adapter)
     
     def scrape_light(url):
         try:
-            # 0.8s Timeout (Zero Tolerance for Lag)
+            # 0.8s Timeout: Fast or nothing.
             r = session.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=0.8)
             soup = BeautifulSoup(r.content, 'html.parser')
             
-            # Massive De-bloating
-            # Removes all interactive elements to focus purely on text data
-            for x in soup(["script", "style", "nav", "footer", "form", "svg", "noscript", "iframe"]):
-                x.decompose()
+            # Massive De-bloating: Removing all these tags makes the payload tiny
+            for trash in soup(["script", "style", "nav", "footer", "form", "svg", "noscript", "iframe"]):
+                trash.decompose()
             
-            # Reduce context window to 1500 chars to increase processing speed
+            # Keep only the essential text (Limit 1500 chars)
             text = soup.get_text(separator=' ', strip=True)
             clean = re.sub(r'\s+', ' ', text)[:1500]
             return f"INFO [{url}]: {clean}\n"
         except: return ""
 
-    # Scrape Targets
     urls = [
         "https://hcmakers.com/", 
         "https://hcmakers.com/about-us/", 
@@ -94,37 +92,37 @@ def load_feather_brain():
         "https://hcmakers.com/category-knowledge/"
     ]
     
+    # Run in parallel
     with concurrent.futures.ThreadPoolExecutor() as executor:
         results = list(executor.map(scrape_light, urls))
         web_context = "".join(results)
 
-    # PDFs
+    # Local PDFs
     pdfs = []
     for f in glob.glob("*.pdf"):
         try: pdfs.append(genai.upload_file(f))
         except: pass
     
-    # Minimalist Instruction Set (Processing speed optimized)
+    # Optimized System Instructions
     sys_instruction = f"""
     You are the Sales AI for Hispanic Cheese Makers-Nuestro Queso.
     LIVE DATA: {web_context}
     
     RULES:
-    1. **LANGUAGE**: Output in same language as input.
-    2. **LINKS**: No broken links. For docs -> https://hcmakers.com/resources/. For Videos -> https://hcmakers.com/category-knowledge/
-    3. **MEDALS**: Reference "21+ Awards" / "Industry Gold Medals".
-    4. **SPEED**: Answer directly.
+    1. **LANGUAGE**: Answer in the user's language (Spanish/English).
+    2. **LINKS**: Doc Link -> https://hcmakers.com/resources/ | Video Link -> https://hcmakers.com/category-knowledge/
+    3. **AWARDS**: Reference specific awards if found in text (e.g. 21 medals).
+    4. **ACCURACY**: Use PDFs for specific specs.
     5. **NO IMAGES**.
     """
     return sys_instruction, pdfs
 
 
 # --- 4. STARTUP ---
-# Only happens once on deploy
-with st.spinner("Connected."):
+with st.spinner("Connecting..."):
     sys_prompt, ai_files = load_feather_brain()
 
-# Greedy Configuration (Temperature 0)
+# Fast Config
 config = genai.types.GenerationConfig(temperature=0.0, candidate_count=1)
 
 model = genai.GenerativeModel(
@@ -143,7 +141,7 @@ for message in st.session_state.chat_history:
         st.markdown(message["content"])
 
 
-# --- 6. INSTANT INTERACTION ---
+# --- 6. INSTANT INPUT WITH "THINKING" INDICATOR ---
 if prompt := st.chat_input("How can I help you? / ¿Cómo te puedo ayudar?"):
     
     with st.chat_message("user"):
@@ -154,14 +152,16 @@ if prompt := st.chat_input("How can I help you? / ¿Cómo te puedo ayudar?"):
         req_content = ai_files + [prompt]
         
         try:
-            # NO visual spinner anymore. Text starts arriving immediately.
-            stream = model.generate_content(req_content, stream=True)
+            # "Thinking" appears instantly, then VANISHES the millisecond text arrives.
+            with st.spinner("Thinking..."):
+                stream = model.generate_content(req_content, stream=True)
             
-            def immediate_yield():
+            def instant_yield():
                 for chunk in stream:
                     if chunk.text: yield chunk.text
 
-            response = st.write_stream(immediate_yield)
+            # Streamlit types the response
+            response = st.write_stream(instant_yield)
             st.session_state.chat_history.append({"role": "assistant", "content": response})
             
         except:
