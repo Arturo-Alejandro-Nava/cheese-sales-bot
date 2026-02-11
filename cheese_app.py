@@ -60,25 +60,19 @@ with col2:
 st.markdown("---")
 
 
-# --- 3. FEATHERWEIGHT DATA ENGINE (Max Speed) ---
+# --- 3. FEATHERWEIGHT DATA ENGINE (Speed + Smarter Logic) ---
 @st.cache_resource(ttl=1800) 
 def load_feather_brain():
-    # Keep connection open for speed
     session = requests.Session()
     adapter = requests.adapters.HTTPAdapter(pool_connections=10, pool_maxsize=10)
     session.mount('https://', adapter)
     
     def scrape_light(url):
         try:
-            # 0.8s Timeout: Fast or nothing.
             r = session.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=0.8)
             soup = BeautifulSoup(r.content, 'html.parser')
-            
-            # Massive De-bloating
             for trash in soup(["script", "style", "nav", "footer", "form", "svg", "noscript", "iframe"]):
                 trash.decompose()
-            
-            # Keep only the essential text (Limit 1500 chars)
             text = soup.get_text(separator=' ', strip=True)
             clean = re.sub(r'\s+', ' ', text)[:1500]
             return f"INFO [{url}]: {clean}\n"
@@ -92,18 +86,16 @@ def load_feather_brain():
         "https://hcmakers.com/category-knowledge/"
     ]
     
-    # Run in parallel
     with concurrent.futures.ThreadPoolExecutor() as executor:
         results = list(executor.map(scrape_light, urls))
         web_context = "".join(results)
 
-    # Local PDFs
     pdfs = []
     for f in glob.glob("*.pdf"):
         try: pdfs.append(genai.upload_file(f))
         except: pass
     
-    # Optimized Instructions with EXACT SALES PHRASE
+    # REVISED INSTRUCTIONS: Consult FIRST, Link LAST.
     sys_instruction = f"""
     You are the Sales AI for Hispanic Cheese Makers-Nuestro Queso.
     LIVE DATA: {web_context}
@@ -111,17 +103,16 @@ def load_feather_brain():
     RULES:
     1. **LANGUAGE**: Answer in the user's language (Spanish/English).
     
-    2. **SALES HANDOFF (CRITICAL)**: 
-       - If the user implies interest in becoming a customer, buying products, distribution, or partnerships:
-       - **Reply EXACTLY**: "To learn how to become a customer, please contact our Sales Team here: https://hcmakers.com/contact-us/"
+    2. **SALES HANDOFF LOGIC**: 
+       - If the user asks for buying advice, bulk options, or implies interest in being a customer (e.g. "I am a buyer"):
+       - **STEP 1:** FULLY ANSWER their question first. Give specific details, recommendations, or lineups based on the PDFs/Website info.
+       - **STEP 2:** ADD this exact phrase at the very end of your response:
+         "\n\nTo learn how to become a customer, please contact our Sales Team here: https://hcmakers.com/contact-us/"
     
-    3. **LINKS**: 
-       - Doc Link -> https://hcmakers.com/resources/ 
-       - Video Link -> https://hcmakers.com/category-knowledge/
-       
-    4. **AWARDS**: Reference specific awards if found in text (e.g. 21 medals).
+    3. **LINKS**: Doc Link -> https://hcmakers.com/resources/ | Video Link -> https://hcmakers.com/category-knowledge/
+    4. **AWARDS**: Reference specific awards (e.g. 21 medals, Gold Medal Quesadilla) found in text.
     5. **ACCURACY**: Use PDFs for specific specs.
-    6. **NO IMAGES**: Do not attempt to generate images.
+    6. **NO IMAGES**.
     """
     return sys_instruction, pdfs
 
@@ -130,7 +121,6 @@ def load_feather_brain():
 with st.spinner("Connecting..."):
     sys_prompt, ai_files = load_feather_brain()
 
-# Fast Config
 config = genai.types.GenerationConfig(temperature=0.0, candidate_count=1)
 
 model = genai.GenerativeModel(
@@ -149,7 +139,7 @@ for message in st.session_state.chat_history:
         st.markdown(message["content"])
 
 
-# --- 6. INSTANT INPUT WITH "THINKING" INDICATOR ---
+# --- 6. INPUT ---
 if prompt := st.chat_input("How can I help you? / ¿Cómo te puedo ayudar?"):
     
     with st.chat_message("user"):
@@ -160,7 +150,6 @@ if prompt := st.chat_input("How can I help you? / ¿Cómo te puedo ayudar?"):
         req_content = ai_files + [prompt]
         
         try:
-            # "Thinking" appears instantly, then VANISHES the millisecond text arrives.
             with st.spinner("Thinking..."):
                 stream = model.generate_content(req_content, stream=True)
             
@@ -168,7 +157,6 @@ if prompt := st.chat_input("How can I help you? / ¿Cómo te puedo ayudar?"):
                 for chunk in stream:
                     if chunk.text: yield chunk.text
 
-            # Streamlit types the response
             response = st.write_stream(instant_yield)
             st.session_state.chat_history.append({"role": "assistant", "content": response})
             
