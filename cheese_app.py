@@ -60,7 +60,7 @@ with col2:
 st.markdown("---")
 
 
-# --- 3. FEATHERWEIGHT DATA ENGINE (Max Speed + Sales Logic) ---
+# --- 3. FEATHERWEIGHT DATA ENGINE (Max Speed) ---
 @st.cache_resource(ttl=1800) 
 def load_feather_brain():
     # Keep connection open for speed
@@ -103,7 +103,7 @@ def load_feather_brain():
         try: pdfs.append(genai.upload_file(f))
         except: pass
     
-    # Optimized System Instructions WITH NEW SALES LOGIC
+    # Optimized Instructions with EXACT SALES PHRASE
     sys_instruction = f"""
     You are the Sales AI for Hispanic Cheese Makers-Nuestro Queso.
     LIVE DATA: {web_context}
@@ -112,9 +112,8 @@ def load_feather_brain():
     1. **LANGUAGE**: Answer in the user's language (Spanish/English).
     
     2. **SALES HANDOFF (CRITICAL)**: 
-       - If the user asks about purchasing, becoming a distributor, bulk pricing, or seems deeply interested after asking product questions:
-       - **You MUST suggest contacting sales.**
-       - **Reply:** "To proceed with an order or partnership, please contact our Sales Team here: https://hcmakers.com/contact-us/"
+       - If the user implies interest in becoming a customer, buying products, distribution, or partnerships:
+       - **Reply EXACTLY**: "To learn how to become a customer, please contact our Sales Team here: https://hcmakers.com/contact-us/"
     
     3. **LINKS**: 
        - Doc Link -> https://hcmakers.com/resources/ 
