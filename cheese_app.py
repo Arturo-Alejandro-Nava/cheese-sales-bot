@@ -60,7 +60,7 @@ with col2:
 st.markdown("---")
 
 
-# --- 3. FEATHERWEIGHT DATA ENGINE (Speed + Smarter Logic) ---
+# --- 3. FEATHERWEIGHT DATA ENGINE (High-Efficiency) ---
 @st.cache_resource(ttl=1800) 
 def load_feather_brain():
     session = requests.Session()
@@ -69,6 +69,7 @@ def load_feather_brain():
     
     def scrape_light(url):
         try:
+            # 0.8s Timeout logic
             r = session.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=0.8)
             soup = BeautifulSoup(r.content, 'html.parser')
             for trash in soup(["script", "style", "nav", "footer", "form", "svg", "noscript", "iframe"]):
@@ -95,7 +96,7 @@ def load_feather_brain():
         try: pdfs.append(genai.upload_file(f))
         except: pass
     
-    # REVISED INSTRUCTIONS: Consult FIRST, Link LAST.
+    # SYSTEM PROMPT
     sys_instruction = f"""
     You are the Sales AI for Hispanic Cheese Makers-Nuestro Queso.
     LIVE DATA: {web_context}
@@ -103,31 +104,41 @@ def load_feather_brain():
     RULES:
     1. **LANGUAGE**: Answer in the user's language (Spanish/English).
     
-    2. **SALES HANDOFF LOGIC**: 
-       - If the user asks for buying advice, bulk options, or implies interest in being a customer (e.g. "I am a buyer"):
-       - **STEP 1:** FULLY ANSWER their question first. Give specific details, recommendations, or lineups based on the PDFs/Website info.
-       - **STEP 2:** ADD this exact phrase at the very end of your response:
-         "\n\nTo learn how to become a customer, please contact our Sales Team here: https://hcmakers.com/contact-us/"
+    2. **SALES HANDOFF**: 
+       - If the user implies interest in buying/distributing:
+       - ANSWER product questions first.
+       - THEN end with exactly: "\n\nTo learn how to become a customer, please contact our Sales Team here: https://hcmakers.com/contact-us/"
     
-    3. **LINKS**: Doc Link -> https://hcmakers.com/resources/ | Video Link -> https://hcmakers.com/category-knowledge/
-    4. **AWARDS**: Reference specific awards (e.g. 21 medals, Gold Medal Quesadilla) found in text.
+    3. **LINKS**: Docs -> https://hcmakers.com/resources/ | Videos -> https://hcmakers.com/category-knowledge/
+    4. **AWARDS**: Reference specific awards if found.
     5. **ACCURACY**: Use PDFs for specific specs.
-    6. **NO IMAGES**.
+    6. **NO IMAGES**: Do not attempt to generate images.
     """
     return sys_instruction, pdfs
 
 
-# --- 4. STARTUP ---
+# --- 4. STARTUP (Upgraded to 2.5 Flash) ---
 with st.spinner("Connecting..."):
     sys_prompt, ai_files = load_feather_brain()
 
+# Gemini 2.5 Config (Temperature 0 for Speed/Accuracy)
 config = genai.types.GenerationConfig(temperature=0.0, candidate_count=1)
 
-model = genai.GenerativeModel(
-    model_name='gemini-2.0-flash',
-    system_instruction=sys_prompt,
-    generation_config=config
-)
+# UPDATED TO NEW STABLE STANDARD: gemini-2.5-flash
+# This is valid according to the October 2025 GA release.
+try:
+    model = genai.GenerativeModel(
+        model_name='gemini-2.5-flash',
+        system_instruction=sys_prompt,
+        generation_config=config
+    )
+except:
+    # If 2.5 is restricted in region, fall back to 2.0-flash-001 (Long Life)
+    model = genai.GenerativeModel(
+        model_name='gemini-2.0-flash',
+        system_instruction=sys_prompt,
+        generation_config=config
+    )
 
 
 # --- 5. UI ---
@@ -139,7 +150,7 @@ for message in st.session_state.chat_history:
         st.markdown(message["content"])
 
 
-# --- 6. INPUT ---
+# --- 6. INSTANT INPUT WITH "THINKING" INDICATOR ---
 if prompt := st.chat_input("How can I help you? / ¿Cómo te puedo ayudar?"):
     
     with st.chat_message("user"):
