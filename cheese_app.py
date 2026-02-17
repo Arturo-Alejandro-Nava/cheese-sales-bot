@@ -60,7 +60,7 @@ with col2:
 st.markdown("---")
 
 
-# --- 3. FEATHERWEIGHT DATA ENGINE (High-Efficiency) ---
+# --- 3. DATA ENGINE (Logic Enhanced) ---
 @st.cache_resource(ttl=1800) 
 def load_feather_brain():
     session = requests.Session()
@@ -69,10 +69,9 @@ def load_feather_brain():
     
     def scrape_light(url):
         try:
-            # 0.8s Timeout logic
             r = session.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=0.8)
             soup = BeautifulSoup(r.content, 'html.parser')
-            for trash in soup(["script", "style", "nav", "footer", "form", "svg", "noscript", "iframe"]):
+            for trash in soup(["script", "style", "nav", "footer", "form", "svg", "iframe"]):
                 trash.decompose()
             text = soup.get_text(separator=' ', strip=True)
             clean = re.sub(r'\s+', ' ', text)[:1500]
@@ -96,36 +95,37 @@ def load_feather_brain():
         try: pdfs.append(genai.upload_file(f))
         except: pass
     
-    # SYSTEM PROMPT
+    # SYSTEM PROMPT: ENFORCED LANGUAGE MATCHING
     sys_instruction = f"""
-    You are the Sales AI for Hispanic Cheese Makers-Nuestro Queso.
+    You are the Sales AI for Hispanic Cheese Makers (Nuestro Queso).
+    
+    *** CRITICAL LANGUAGE RULES ***
+    1. **DETECT INPUT LANGUAGE FIRST**: 
+       - IF User writes in ENGLISH -> You MUST reply in ENGLISH.
+       - IF User writes in SPANISH -> You MUST reply in SPANISH.
+    2. **DO NOT MIX**: Never switch languages unless the user switches. 
+    3. **BRANDING**: Even though "Nuestro Queso" is a Spanish name, if the question is English, keep the rest of the sentence in English.
+    
     LIVE DATA: {web_context}
     
-    RULES:
-    1. **LANGUAGE**: Answer in the user's language (Spanish/English).
-    
-    2. **SALES HANDOFF**: 
-       - If the user implies interest in buying/distributing:
-       - ANSWER product questions first.
-       - THEN end with exactly: "\n\nTo learn how to become a customer, please contact our Sales Team here: https://hcmakers.com/contact-us/"
-    
-    3. **LINKS**: Docs -> https://hcmakers.com/resources/ | Videos -> https://hcmakers.com/category-knowledge/
-    4. **AWARDS**: Reference specific awards if found.
-    5. **ACCURACY**: Use PDFs for specific specs.
-    6. **NO IMAGES**: Do not attempt to generate images.
+    SALES RULES:
+    1. **INTEREST DETECTED**: If user asks about buying/wholesale/distributor:
+       - FIRST answer the specific product question.
+       - THEN conclude with exactly: "\n\nTo learn how to become a customer, please contact our Sales Team here: https://hcmakers.com/contact-us/"
+    2. **LINKS**: Docs -> https://hcmakers.com/resources/ | Videos -> https://hcmakers.com/category-knowledge/
+    3. **AWARDS**: Reference specific awards (e.g. 21 medals).
+    4. **NO IMAGES**.
     """
     return sys_instruction, pdfs
 
 
-# --- 4. STARTUP (Upgraded to 2.5 Flash) ---
+# --- 4. STARTUP ---
 with st.spinner("Connecting..."):
     sys_prompt, ai_files = load_feather_brain()
 
-# Gemini 2.5 Config (Temperature 0 for Speed/Accuracy)
 config = genai.types.GenerationConfig(temperature=0.0, candidate_count=1)
 
-# UPDATED TO NEW STABLE STANDARD: gemini-2.5-flash
-# This is valid according to the October 2025 GA release.
+# USING NEWEST STABLE MODEL
 try:
     model = genai.GenerativeModel(
         model_name='gemini-2.5-flash',
@@ -133,7 +133,6 @@ try:
         generation_config=config
     )
 except:
-    # If 2.5 is restricted in region, fall back to 2.0-flash-001 (Long Life)
     model = genai.GenerativeModel(
         model_name='gemini-2.0-flash',
         system_instruction=sys_prompt,
@@ -150,7 +149,7 @@ for message in st.session_state.chat_history:
         st.markdown(message["content"])
 
 
-# --- 6. INSTANT INPUT WITH "THINKING" INDICATOR ---
+# --- 6. INSTANT INPUT ---
 if prompt := st.chat_input("How can I help you? / ¿Cómo te puedo ayudar?"):
     
     with st.chat_message("user"):
