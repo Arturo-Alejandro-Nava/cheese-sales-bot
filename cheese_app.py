@@ -60,7 +60,7 @@ with col2:
 st.markdown("---")
 
 
-# --- 3. DATA ENGINE (Optimized) ---
+# --- 3. DATA ENGINE (Logic Enhanced for Greetings & Language) ---
 @st.cache_resource(ttl=1800) 
 def load_feather_brain():
     session = requests.Session()
@@ -69,7 +69,6 @@ def load_feather_brain():
     
     def scrape_light(url):
         try:
-            # 0.8s Timeout for speed
             r = session.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=0.8)
             soup = BeautifulSoup(r.content, 'html.parser')
             for trash in soup(["script", "style", "nav", "footer", "form", "svg", "iframe"]):
@@ -96,45 +95,54 @@ def load_feather_brain():
         try: pdfs.append(genai.upload_file(f))
         except: pass
     
-    # REVISED INSTRUCTIONS: Consult FIRST, Link LAST.
+    # SYSTEM PROMPT UPDATES
     sys_instruction = f"""
-    You are the Sales AI for Hispanic Cheese Makers (Nuestro Queso).
-    
-    *** LANGUAGE RULES ***
-    1. IF User = English -> Reply English.
-    2. IF User = Spanish -> Reply Spanish.
-    3. BRANDING: Keep "Hispanic Cheese Makers" or "Nuestro Queso" as is.
-    
+    You are the Sales AI for Hispanic Cheese Makers-Nuestro Queso.
     LIVE DATA: {web_context}
     
-    *** SALES STRATEGY ***
-    1. **CONSULT FIRST**: If user asks about lineups, bulk, purchasing, or implies being a buyer:
-       - **STEP A**: Answer the question thoroughly (Use PDFs to recommend products, shelf life, sizes).
-       - **STEP B**: Only AFTER the answer, skip 2 lines and output this EXACT phrase:
-         "To learn how to become a customer, please contact our Sales Team here: https://hcmakers.com/contact-us/"
-       - (If talking in Spanish, translate that specific phrase to Spanish).
+    *** PRIORITY RULES (Follow in Order) ***
     
-    2. **LINKS**: Docs -> https://hcmakers.com/resources/ | Videos -> https://hcmakers.com/category-knowledge/
-    3. **MEDALS**: Quote specific award counts found in text.
-    4. **ACCURACY**: Use PDFs for specific numbers.
-    5. **NO IMAGES**.
+    1. **STRICT LANGUAGE LOCK**: 
+       - IF user inputs **English**: Reply in 100% **English**.
+       - IF user inputs **Spanish**: Reply in 100% **Spanish**.
+       - Do NOT switch languages mid-sentence.
+    
+    2. **GREETING PROTOCOL**:
+       - IF user says "Hi", "Hello", "Hola", or "Good morning":
+       - **IGNORE** the website data for this turn.
+       - **REPLY SIMPLY**: "Hello! Welcome to Hispanic Cheese Makers. How can I assist you with our products or specs today?" (Translate if Spanish).
+       - Do NOT list cheeses or medals during a simple greeting.
+    
+    3. **SALES HANDOFF**: 
+       - If the user implies interest in buying/distributing:
+       - ANSWER product questions first.
+       - THEN end with exactly: "\n\nTo learn how to become a customer, please contact our Sales Team here: https://hcmakers.com/contact-us/"
+    
+    4. **ACCURACY**: Use provided PDF info/Site text only. No hallucinated videos/docs.
     """
     return sys_instruction, pdfs
 
 
-# --- 4. STARTUP (STRICT 2.5 Flash) ---
+# --- 4. STARTUP (Gemini 1.5 Flash - Stable) ---
 with st.spinner("Connecting..."):
     sys_prompt, ai_files = load_feather_brain()
 
 config = genai.types.GenerationConfig(temperature=0.0, candidate_count=1)
 
-# WE ARE USING ONLY 2.5 FLASH. 
-# This ensures it stays online well past March 2026.
-model = genai.GenerativeModel(
-    model_name='gemini-2.5-flash',
-    system_instruction=sys_prompt,
-    generation_config=config
-)
+# Using STABLE 1.5 Flash (Long Support Life)
+try:
+    model = genai.GenerativeModel(
+        model_name='gemini-1.5-flash',
+        system_instruction=sys_prompt,
+        generation_config=config
+    )
+except:
+    # Safety fallback
+    model = genai.GenerativeModel(
+        model_name='gemini-1.5-flash-latest',
+        system_instruction=sys_prompt,
+        generation_config=config
+    )
 
 
 # --- 5. UI ---
@@ -146,7 +154,7 @@ for message in st.session_state.chat_history:
         st.markdown(message["content"])
 
 
-# --- 6. INPUT LOOP ---
+# --- 6. INSTANT INPUT WITH "THINKING" INDICATOR ---
 if prompt := st.chat_input("How can I help you? / ¿Cómo te puedo ayudar?"):
     
     with st.chat_message("user"):
