@@ -60,7 +60,7 @@ with col2:
 st.markdown("---")
 
 
-# --- 3. DATA ENGINE (Logic Enhanced for Greetings & Language) ---
+# --- 3. DATA ENGINE (High Logic + Speed) ---
 @st.cache_resource(ttl=1800) 
 def load_feather_brain():
     session = requests.Session()
@@ -95,54 +95,50 @@ def load_feather_brain():
         try: pdfs.append(genai.upload_file(f))
         except: pass
     
-    # SYSTEM PROMPT UPDATES
+    # SYSTEM PROMPT
     sys_instruction = f"""
     You are the Sales AI for Hispanic Cheese Makers-Nuestro Queso.
     LIVE DATA: {web_context}
     
-    *** PRIORITY RULES (Follow in Order) ***
+    *** CRITICAL INSTRUCTIONS ***
     
-    1. **STRICT LANGUAGE LOCK**: 
-       - IF user inputs **English**: Reply in 100% **English**.
-       - IF user inputs **Spanish**: Reply in 100% **Spanish**.
-       - Do NOT switch languages mid-sentence.
+    1. **LANGUAGE LOCK**: 
+       - IF Input is ENGLISH -> Reply in ENGLISH.
+       - IF Input is SPANISH -> Reply in SPANISH.
+       - STRICTLY follow the user's language.
     
     2. **GREETING PROTOCOL**:
-       - IF user says "Hi", "Hello", "Hola", or "Good morning":
-       - **IGNORE** the website data for this turn.
-       - **REPLY SIMPLY**: "Hello! Welcome to Hispanic Cheese Makers. How can I assist you with our products or specs today?" (Translate if Spanish).
-       - Do NOT list cheeses or medals during a simple greeting.
+       - If user says "Hi", "Hello", "Hola":
+       - **Reply:** "Hello! How can I help you today with our cheese products?" (Or Spanish equivalent).
+       - Do NOT dump information unless asked.
     
     3. **SALES HANDOFF**: 
-       - If the user implies interest in buying/distributing:
-       - ANSWER product questions first.
+       - If user asks about purchasing, pricing, bulk orders, or being a buyer:
+       - Answer product details FIRST.
        - THEN end with exactly: "\n\nTo learn how to become a customer, please contact our Sales Team here: https://hcmakers.com/contact-us/"
     
-    4. **ACCURACY**: Use provided PDF info/Site text only. No hallucinated videos/docs.
+    4. **ACCURACY**:
+       - Medals: Reference "Industry Awards" or "21 Medals" if in text.
+       - Specs: Use PDF data.
+       
+    5. **NO IMAGES**: Text only.
     """
     return sys_instruction, pdfs
 
 
-# --- 4. STARTUP (Gemini 1.5 Flash - Stable) ---
+# --- 4. STARTUP (STRICT GEMINI 2.5) ---
 with st.spinner("Connecting..."):
     sys_prompt, ai_files = load_feather_brain()
 
 config = genai.types.GenerationConfig(temperature=0.0, candidate_count=1)
 
-# Using STABLE 1.5 Flash (Long Support Life)
-try:
-    model = genai.GenerativeModel(
-        model_name='gemini-1.5-flash',
-        system_instruction=sys_prompt,
-        generation_config=config
-    )
-except:
-    # Safety fallback
-    model = genai.GenerativeModel(
-        model_name='gemini-1.5-flash-latest',
-        system_instruction=sys_prompt,
-        generation_config=config
-    )
+# FORCE GEMINI 2.5 FLASH ONLY
+# No fallback to old models.
+model = genai.GenerativeModel(
+    model_name='gemini-2.5-flash',
+    system_instruction=sys_prompt,
+    generation_config=config
+)
 
 
 # --- 5. UI ---
@@ -154,7 +150,7 @@ for message in st.session_state.chat_history:
         st.markdown(message["content"])
 
 
-# --- 6. INSTANT INPUT WITH "THINKING" INDICATOR ---
+# --- 6. INSTANT INPUT WITH THINKING INDICATOR ---
 if prompt := st.chat_input("How can I help you? / ¿Cómo te puedo ayudar?"):
     
     with st.chat_message("user"):
@@ -175,5 +171,14 @@ if prompt := st.chat_input("How can I help you? / ¿Cómo te puedo ayudar?"):
             response = st.write_stream(instant_yield)
             st.session_state.chat_history.append({"role": "assistant", "content": response})
             
-        except:
-            st.error("...")
+        except Exception as e:
+            # Re-tries the connection once silently before failing
+            try:
+                stream = model.generate_content(req_content, stream=True)
+                def retry_yield():
+                    for chunk in stream:
+                        if chunk.text: yield chunk.text
+                response = st.write_stream(retry_yield)
+                st.session_state.chat_history.append({"role": "assistant", "content": response})
+            except:
+                st.error("Connection busy. Please ask again.")
