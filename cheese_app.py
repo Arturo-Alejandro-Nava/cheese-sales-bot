@@ -6,8 +6,6 @@ import os
 import glob
 import re
 import concurrent.futures
-
-# Allows injecting the Auto-Scroll Script
 import streamlit.components.v1 as components 
 
 # --- 1. CONFIGURATION ---
@@ -53,7 +51,6 @@ with col2:
         .line-one { font-size: 24px; font-weight: 300; }
         .line-two { font-size: 24px; font-weight: 400; }
         
-        /* Auto hides the Streamlit menu and paddings for clean embedding */
         #MainMenu {visibility: hidden;} 
         header {visibility: hidden;}
         </style>
@@ -67,7 +64,7 @@ with col2:
 st.markdown("---")
 
 
-# --- 3. DATA ENGINE (Live Cache & Context Switcher) ---
+# --- 3. HIGH-VELOCITY PURE ENGINE ---
 @st.cache_resource(ttl=1800) 
 def load_feather_brain():
     session = requests.Session()
@@ -76,7 +73,6 @@ def load_feather_brain():
     
     def scrape_light(url):
         try:
-            # High aggression 0.8s timeout
             r = session.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=0.8)
             soup = BeautifulSoup(r.content, 'html.parser')
             for trash in soup(["script", "style", "nav", "footer", "form", "svg", "iframe"]):
@@ -103,34 +99,38 @@ def load_feather_brain():
         try: pdfs.append(genai.upload_file(f))
         except: pass
     
-    # FAST-SYSTEM INSTRUCTIONS
     sys_instruction = f"""
     You are the Sales AI for Hispanic Cheese Makers-Nuestro Queso.
     LIVE DATA: {web_context}
     
-    *** OPERATIONAL PROTOCOLS ***
-    1. **LANGUAGE**: Keep response matching exactly the user language. Do not mix them.
+    *** RULES ***
+    1. **LANGUAGE**: IF Input is ENGLISH -> Reply in ENGLISH. IF Input is SPANISH -> Reply in SPANISH.
     
-    2. **CASUAL RESPONSES (CRITICAL)**: 
-       - IF user inputs basic words ("Hi", "Thanks", "Interesting", "Wow", "Good to know"): 
-       - Respond simply in one single brief sentence. Acknowledge and politely offer more help. Do NOT write paragraphs about the company!
+    2. **GREETINGS & CASUAL REPLIES**:
+       - IF user says "Hi" or "Hello": REPLY: "Hello! Welcome to Hispanic Cheese Makers. How can I help you today with our cheese products?" 
+       - IF user says "that's interesting", "wow", "ok", or "thank you": Respond cleanly with 1 single polite sentence offering more help. DO NOT write paragraphs for simple chit-chat.
+
+    3. **SALES HANDOFF (CRITICAL)**: 
+       - IF user implies interest in buying, pricing, sizes, or being a customer:
+       - FIRST answer their specific product question fully (using the provided PDF tables for Oz, Lbs, Fat, and Specs).
+       - THEN skip a line and append exactly this phrase at the bottom: 
+         "To learn how to become a customer, please contact our Sales Team here: https://hcmakers.com/contact-us/"
     
-    3. **SALES HANDOFF**: 
-       - If they indicate intent to purchase or be a wholesale buyer:
-       - Explain the products briefly, THEN drop this at the bottom: 
-         "\n\nTo learn how to become a customer, please contact our Sales Team here: https://hcmakers.com/contact-us/"
-         
-    4. **NO HALLUCINATIONS**: Read exact facts provided from text/docs. (21 awards, link /category-knowledge/ for videos).
+    4. **ACCURACY**: 
+       - Base specific nutritional info and sizing on PDFs ONLY.
+       - Use Docs -> /resources/ , Videos -> /category-knowledge/
+       
+    5. **NO IMAGES**: Text conversations only.
     """
     return sys_instruction, pdfs
 
 
-# --- 4. STARTUP (Gemini 2.5 FLASH STRICT) ---
+# --- 4. STARTUP (NO SPEED CAPS) ---
 with st.spinner("Connecting..."):
     sys_prompt, ai_files = load_feather_brain()
 
-# 'Greedy decoding' for Max computational return velocity, capping length to stop rambling
-config = genai.types.GenerationConfig(temperature=0.0, candidate_count=1, max_output_tokens=400)
+# Removed the max_tokens limit completely. The response will no longer abruptly cut off mid-sentence.
+config = genai.types.GenerationConfig(temperature=0.0, candidate_count=1)
 
 try:
     model = genai.GenerativeModel(
@@ -138,12 +138,14 @@ try:
         system_instruction=sys_prompt,
         generation_config=config
     )
-except Exception as e:
-    st.error(f"Critical System Loading Error: {e}")
-    st.stop()
+except:
+    model = genai.GenerativeModel(
+        model_name='gemini-2.0-flash',
+        system_instruction=sys_prompt,
+        generation_config=config
+    )
 
-
-# --- 5. UI: HISTORY LOG ---
+# --- 5. UI: HISTORY & SCROLLING ---
 if "chat_history" not in st.session_state:
     st.session_state.chat_history =[]
 
@@ -151,20 +153,19 @@ for message in st.session_state.chat_history:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-
-# --- UI SCROLL UTILITY ---
 def autoscroll_down():
     components.html(
         f"""
             <script>
-                // Snaps Streamlit UI downwards continuously to remain attached to text rendering
                 window.parent.scrollTo(0, window.parent.document.body.scrollHeight);
+                const scrolling_target = window.parent.document.querySelector('.stChatInputContainer');
+                if(scrolling_target) {{ scrolling_target.scrollIntoView({{ behavior: "smooth" }}); }}
             </script>
         """, height=0
     )
 
 
-# --- 6. INTELLIGENT PAYLOAD CONTROLLER & INPUT ---
+# --- 6. STRAIGHT PIPE INSTANT RESPONSE ---
 if prompt := st.chat_input("How can I help you? / ¿Cómo te puedo ayudar?"):
     
     with st.chat_message("user"):
@@ -172,42 +173,21 @@ if prompt := st.chat_input("How can I help you? / ¿Cómo te puedo ayudar?"):
     st.session_state.chat_history.append({"role": "user", "content": prompt})
 
     with st.chat_message("assistant"):
-        
-        # SMART ROUTING - (THE REASON IT IS FAST)
-        # Scan if question requires complex spec math using Regular Expressions (bilingual tracking)
-        heavy_data_triggers = re.compile(r'protein|fat|size|lb|oz|peso|tamaño|nutrit|ingred|grasa|shelf life', re.IGNORECASE)
-        
-        # If words exist -> Use AI PDFs (Slower, ~3sec)
-        # If words dont -> Send only Prompt & Web Knowledge (Instantaneous, ~0.5s)
-        if heavy_data_triggers.search(prompt):
-            req_content = ai_files + [prompt]
-        else:
-            req_content = [prompt]
+        # Straight pipe transmission. Bypasses smart routing logic to return the swiftest query connection possible.
+        req_content = ai_files + [prompt]
         
         try:
             with st.spinner("Thinking..."):
                 stream = model.generate_content(req_content, stream=True)
             
-            def stream_data():
+            def smooth_yield():
                 for chunk in stream:
                     if chunk.text: yield chunk.text
 
-            # Visual typewriter effect onto user interface 
-            response = st.write_stream(stream_data)
+            response = st.write_stream(smooth_yield)
             st.session_state.chat_history.append({"role": "assistant", "content": response})
             
-            # Anchor window view natively downward. 
-            autoscroll_down() 
+            autoscroll_down()
             
-        except Exception:
-            # Fallback auto-refresh without user noticing red lines immediately.
-            try:
-                stream = model.generate_content(req_content, stream=True)
-                def rt_stream():
-                    for c in stream:
-                        if c.text: yield c.text
-                res = st.write_stream(rt_stream)
-                st.session_state.chat_history.append({"role":"assistant", "content": res})
-                autoscroll_down()
-            except:
-                st.error("Signal disrupted, please ask that one more time.")
+        except Exception as e:
+            st.error("There was a signal disruption, please try that request once more.")
