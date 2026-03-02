@@ -6,6 +6,9 @@ import os
 import glob
 import re
 import concurrent.futures
+import time
+
+# Allows injecting the Auto-Scroll Script
 import streamlit.components.v1 as components 
 
 # --- 1. CONFIGURATION ---
@@ -64,9 +67,11 @@ with col2:
 st.markdown("---")
 
 
-# --- 3. HIGH-VELOCITY PURE ENGINE ---
-@st.cache_resource(ttl=1800) 
+# --- 3. HIGH-VELOCITY PRE-COMPUTED DATA ENGINE ---
+# We cache this to keep chat loops fully text-based and completely instant!
+@st.cache_resource(ttl=3600) 
 def load_feather_brain():
+    # 1. PARALLEL WEBSITE SCRAPING
     session = requests.Session()
     adapter = requests.adapters.HTTPAdapter(pool_connections=10, pool_maxsize=10)
     session.mount('https://', adapter)
@@ -77,9 +82,8 @@ def load_feather_brain():
             soup = BeautifulSoup(r.content, 'html.parser')
             for trash in soup(["script", "style", "nav", "footer", "form", "svg", "iframe"]):
                 trash.decompose()
-            text = soup.get_text(separator=' ', strip=True)
-            clean = re.sub(r'\s+', ' ', text)[:1500]
-            return f"INFO [{url}]: {clean}\n"
+            clean = re.sub(r'\s+', ' ', soup.get_text(separator=' ', strip=True))[:1500]
+            return f"INFO[{url}]: {clean}\n"
         except: return ""
 
     urls =[
@@ -94,58 +98,82 @@ def load_feather_brain():
         results = list(executor.map(scrape_light, urls))
         web_context = "".join(results)
 
-    pdfs =[]
-    for f in glob.glob("*.pdf"):
-        try: pdfs.append(genai.upload_file(f))
+    # 2. PRE-PROCESS PDFs TO TEXT (The Ultimate Speed Hack)
+    # Instead of uploading files on every question, we extract them instantly right here.
+    pdf_files_in_directory = glob.glob("*.pdf")
+    uploaded_gfiles =[]
+    for file_name in pdf_files_in_directory:
+        try: 
+            uploaded = genai.upload_file(file_name)
+            # Guarantee the file is "Active" in Google Cloud before reading
+            while uploaded.state.name == "PROCESSING":
+                time.sleep(1)
+                uploaded = genai.get_file(uploaded.name)
+            uploaded_gfiles.append(uploaded)
         except: pass
+        
+    extracted_pdf_data = "No local specs loaded."
+    if uploaded_gfiles:
+        try:
+            # We ask Google 2.5 Flash to summarize the spec sheets *ONCE*. 
+            reader_model = genai.GenerativeModel('gemini-2.5-flash')
+            req = uploaded_gfiles +["Extract all facts, nutrition specs, cheese variants, sizes (lb/oz), and pack sizes into detailed bullet points. Include ALL specific specs and facts from these sheets."]
+            extracted_pdf_data = reader_model.generate_content(req).text
+        except Exception as e:
+            extracted_pdf_data = f"Fallback mode active."
+
     
+    # 3. STATIC COMPILED SYSTEM PROMPT 
     sys_instruction = f"""
     You are the Sales AI for Hispanic Cheese Makers-Nuestro Queso.
-    LIVE DATA: {web_context}
     
-    *** RULES ***
-    1. **LANGUAGE**: IF Input is ENGLISH -> Reply in ENGLISH. IF Input is SPANISH -> Reply in SPANISH.
+    LIVE DATA (WEBSITE): 
+    {web_context}
     
-    2. **GREETINGS & CASUAL REPLIES**:
-       - IF user says "Hi" or "Hello": REPLY: "Hello! Welcome to Hispanic Cheese Makers. How can I help you today with our cheese products?" 
-       - IF user says "that's interesting", "wow", "ok", or "thank you": Respond cleanly with 1 single polite sentence offering more help. DO NOT write paragraphs for simple chit-chat.
+    HARD DATA (FROM PDFs/SPEC SHEETS):
+    {extracted_pdf_data}
+    
+    *** CRITICAL SALES STRATEGY & CHAT RULES ***
+    1. **LANGUAGE**: Output in exactly the same language as user.
+    
+    2. **SMALL TALK PROTOCOL**:
+       - User: "Hi / Hello". YOUR RESPONSE: "Hello! Welcome to Hispanic Cheese Makers. How can I help you today with our cheese products?" 
+       - User comments generally (wow, nice, interesting). YOUR RESPONSE: Just warmly acknowledge and politely offer to help further (e.g. "I'm glad to hear! Are you interested in finding sizes for a specific product?"). NO data dumps!
 
-    3. **SALES HANDOFF (CRITICAL)**: 
-       - IF user implies interest in buying, pricing, sizes, or being a customer:
-       - FIRST answer their specific product question fully (using the provided PDF tables for Oz, Lbs, Fat, and Specs).
-       - THEN skip a line and append exactly this phrase at the bottom: 
-         "To learn how to become a customer, please contact our Sales Team here: https://hcmakers.com/contact-us/"
+    3. **CONSULTATIVE BUYER PATH**: 
+       - If a user asks a detailed question, asks about lineages, buying, sizes, ordering, or distributors:
+       - **First**: Address ALL questions fully based on the 'HARD DATA'.
+       - **Second**: Finish your message entirely. Do not stop mid-sentence.
+       - **Third**: Provide 2 line breaks, and at the very bottom end your answer with these exact words (Translate phrase exactly if conversing in Spanish):
+         "\n\nTo learn how to become a customer, please contact our Sales Team here: https://hcmakers.com/contact-us/"
     
-    4. **ACCURACY**: 
-       - Base specific nutritional info and sizing on PDFs ONLY.
-       - Use Docs -> /resources/ , Videos -> /category-knowledge/
-       
-    5. **NO IMAGES**: Text conversations only.
+    4. **FACT CHECKING**: Only use facts from 'LIVE DATA' or 'HARD DATA' section above. Mention videos at: /category-knowledge/. No external/made-up URLs.
+    5. **NO IMAGES**.
     """
-    return sys_instruction, pdfs
+    return sys_instruction
 
 
-# --- 4. STARTUP (NO SPEED CAPS) ---
-with st.spinner("Connecting..."):
-    sys_prompt, ai_files = load_feather_brain()
+# --- 4. ENGINE STARTUP ---
+# Only displays progress on cold startups
+with st.spinner("Extracting Spec Sheets and connecting brain to Google Servers..."):
+    sys_prompt = load_feather_brain()
 
-# Removed the max_tokens limit completely. The response will no longer abruptly cut off mid-sentence.
+# Removed token caps entirely so answers won't mysteriously end prematurely!
 config = genai.types.GenerationConfig(temperature=0.0, candidate_count=1)
 
+# Using stable pure Gemini 2.5 Flash
 try:
     model = genai.GenerativeModel(
         model_name='gemini-2.5-flash',
         system_instruction=sys_prompt,
         generation_config=config
     )
-except:
-    model = genai.GenerativeModel(
-        model_name='gemini-2.0-flash',
-        system_instruction=sys_prompt,
-        generation_config=config
-    )
+except Exception as e:
+    st.error("Failed to load Gemini API connection.")
+    st.stop()
 
-# --- 5. UI: HISTORY & SCROLLING ---
+
+# --- 5. UI CONTROLS ---
 if "chat_history" not in st.session_state:
     st.session_state.chat_history =[]
 
@@ -158,14 +186,14 @@ def autoscroll_down():
         f"""
             <script>
                 window.parent.scrollTo(0, window.parent.document.body.scrollHeight);
-                const scrolling_target = window.parent.document.querySelector('.stChatInputContainer');
-                if(scrolling_target) {{ scrolling_target.scrollIntoView({{ behavior: "smooth" }}); }}
+                const stInput = window.parent.document.querySelector('.stChatInputContainer');
+                if(stInput) {{ stInput.scrollIntoView({{ behavior: "smooth" }}); }}
             </script>
         """, height=0
     )
 
 
-# --- 6. STRAIGHT PIPE INSTANT RESPONSE ---
+# --- 6. INSTANT INTERACTION LOOP ---
 if prompt := st.chat_input("How can I help you? / ¿Cómo te puedo ayudar?"):
     
     with st.chat_message("user"):
@@ -173,21 +201,29 @@ if prompt := st.chat_input("How can I help you? / ¿Cómo te puedo ayudar?"):
     st.session_state.chat_history.append({"role": "user", "content": prompt})
 
     with st.chat_message("assistant"):
-        # Straight pipe transmission. Bypasses smart routing logic to return the swiftest query connection possible.
-        req_content = ai_files + [prompt]
-        
+        # We NO LONGER attach files to this! We pass pure string data to make response times less than 0.5s.
         try:
             with st.spinner("Thinking..."):
-                stream = model.generate_content(req_content, stream=True)
+                stream = model.generate_content([prompt], stream=True)
             
-            def smooth_yield():
+            def typing_speed():
                 for chunk in stream:
                     if chunk.text: yield chunk.text
 
-            response = st.write_stream(smooth_yield)
+            # Stream straight to frontend
+            response = st.write_stream(typing_speed)
             st.session_state.chat_history.append({"role": "assistant", "content": response})
-            
             autoscroll_down()
             
         except Exception as e:
-            st.error("There was a signal disruption, please try that request once more.")
+            # Silent instant backup catch handling
+            try:
+                stream = model.generate_content([prompt], stream=True)
+                def backup_speed():
+                    for chunk in stream:
+                        if chunk.text: yield chunk.text
+                response = st.write_stream(backup_speed)
+                st.session_state.chat_history.append({"role": "assistant", "content": response})
+                autoscroll_down()
+            except:
+                st.error("Connectivity pause. Resend your message please.")
