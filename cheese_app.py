@@ -7,6 +7,7 @@ import glob
 import re
 import concurrent.futures
 import time
+import threading
 import streamlit.components.v1 as components 
 
 # --- 1. CONFIGURATION ---
@@ -22,6 +23,12 @@ except:
     st.stop()
 
 genai.configure(api_key=API_KEY)
+
+
+# -------------------------------------------------------------
+# 🔗 PASTE YOUR GOOGLE SCRIPT WEB APP URL HERE:
+GOOGLE_SHEETS_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbyaakBC7R8ErNlEgK4wc2aQdKBrT8IiamZr-YtxYDYLtXNZhQDfeAa3XzdLkm0P1Wul/exec"
+# -------------------------------------------------------------
 
 
 # --- 2. HEADER ---
@@ -94,7 +101,6 @@ def load_feather_brain():
         results = list(executor.map(scrape_light, urls))
         web_context = "".join(results)
 
-    # Convert PDFs ONCE into permanent memory text
     pdf_files_in_directory = glob.glob("*.pdf")
     uploaded_gfiles =[]
     for file_name in pdf_files_in_directory:
@@ -110,9 +116,10 @@ def load_feather_brain():
     if uploaded_gfiles:
         try:
             reader_model = genai.GenerativeModel('gemini-2.5-flash')
-            req = uploaded_gfiles +["Extract all facts, nutrition specs, cheese variants, sizes (lb/oz), and pack sizes into detailed bullet points."]
+            req = uploaded_gfiles +["Extract all facts, nutrition specs, cheese variants, sizes (lb/oz), and pack sizes into detailed bullet points. Include ALL specific specs and facts from these sheets."]
             extracted_pdf_data = reader_model.generate_content(req).text
-        except: pass
+        except Exception as e:
+            extracted_pdf_data = f"Fallback mode active."
 
     sys_instruction = f"""
     You are the Sales AI for Hispanic Cheese Makers-Nuestro Queso.
@@ -120,23 +127,25 @@ def load_feather_brain():
     LIVE DATA (WEBSITE): 
     {web_context}
     
-    HARD DATA (SPECS):
+    HARD DATA (FROM PDFs/SPEC SHEETS):
     {extracted_pdf_data}
     
-    *** CHAT RULES ***
-    1. **LANGUAGE**: Output exactly matching user's language (Spanish or English).
+    *** CRITICAL SALES STRATEGY & CHAT RULES ***
+    1. **LANGUAGE**: Output in exactly the same language as user.
     
-    2. **CASUAL CONVERSATION**:
-       - "Hi / Hello": "Hello! Welcome to Hispanic Cheese Makers. How can I help you today with our cheese products?" 
-       - Compliments (wow, nice, interesting): Acknowledge politely and briefly without reciting long lists of cheese specs.
+    2. **SMALL TALK PROTOCOL**:
+       - User: "Hi / Hello". YOUR RESPONSE: "Hello! Welcome to Hispanic Cheese Makers. How can I help you today with our cheese products?" 
+       - User comments generally (wow, nice, interesting). YOUR RESPONSE: Just warmly acknowledge and politely offer to help further (e.g. "I'm glad to hear! Are you interested in finding sizes for a specific product?"). NO data dumps!
 
-    3. **SALES HANDOFF**: 
-       - IF a user asks a detailed question, asks about buying, ordering, pricing, or distributors:
-       - **First**: Give the detailed specs/lineups. Do NOT stop your sentence short.
-       - **Second**: Finish completely, provide 2 line breaks, and append: "\n\nTo learn how to become a customer, please contact our Sales Team here: https://hcmakers.com/contact-us/"
+    3. **CONSULTATIVE BUYER PATH**: 
+       - If a user asks a detailed question, asks about lineages, buying, sizes, ordering, or distributors:
+       - **First**: Address ALL questions fully based on the 'HARD DATA'.
+       - **Second**: Finish your message entirely. Do not stop mid-sentence.
+       - **Third**: Provide 2 line breaks, and at the very bottom end your answer with these exact words (Translate phrase exactly if conversing in Spanish):
+         "\n\nTo learn how to become a customer, please contact our Sales Team here: https://hcmakers.com/contact-us/"
     
-    4. **FACT CHECKING**: Stick to Data blocks. Videos are at: /category-knowledge/.
-    5. **NO IMAGES**: Text conversations only.
+    4. **FACT CHECKING**: Only use facts from 'LIVE DATA' or 'HARD DATA' section above. Mention videos at: /category-knowledge/. No external URLs.
+    5. **NO IMAGES**.
     """
     return sys_instruction
 
@@ -145,7 +154,6 @@ def load_feather_brain():
 with st.spinner("Synchronizing specifications..."):
     sys_prompt = load_feather_brain()
 
-# Removed size cap limits, allows full sentences to output!
 config = genai.types.GenerationConfig(temperature=0.0, candidate_count=1)
 
 try:
@@ -154,12 +162,12 @@ try:
         system_instruction=sys_prompt,
         generation_config=config
     )
-except:
-    st.error("Failed to load Gemini.")
+except Exception as e:
+    st.error("Failed to load Gemini API connection.")
     st.stop()
 
 
-# --- 5. UI CONTROLS & NEW JS SCROLL (Cross-Domain Fixed) ---
+# --- 5. UI CONTROLS ---
 if "chat_history" not in st.session_state:
     st.session_state.chat_history =[]
 
@@ -168,13 +176,11 @@ for message in st.session_state.chat_history:
         st.markdown(message["content"])
 
 def force_auto_scroll():
-    # REMOVED "window.parent". Now exclusively targets Streamlit inner boundaries!
-    # Timers trigger exactly as paragraphs expand so you don't miss text mid-generation.
     scroll_js = """
     <script>
         function goDown() {
-            var chatInput = window.document.querySelector('.stChatInputContainer');
-            var blockBox = window.document.querySelector('.main .block-container');
+            var chatInput = window.parent.document.querySelector('.stChatInputContainer');
+            var blockBox = window.parent.document.querySelector('.main .block-container');
             if(chatInput) { chatInput.scrollIntoView({ behavior: 'smooth', block: 'end' }); }
             if(blockBox) { blockBox.scrollTop = blockBox.scrollHeight; }
         }
@@ -187,7 +193,16 @@ def force_auto_scroll():
     components.html(scroll_js, height=0)
 
 
-# --- 6. INSTANT INTERACTION LOOP ---
+# --- 6. BACKGROUND LOGGING FUNCTION ---
+def save_log_to_sheets(user_q, ai_response):
+    if "script.google.com" in GOOGLE_SHEETS_WEBHOOK_URL:
+        try:
+            # We send data strictly in the background
+            requests.post(GOOGLE_SHEETS_WEBHOOK_URL, json={"user": user_q, "bot": ai_response})
+        except: pass
+
+
+# --- 7. INSTANT INTERACTION LOOP ---
 if prompt := st.chat_input("How can I help you? / ¿Cómo te puedo ayudar?"):
     
     with st.chat_message("user"):
@@ -203,11 +218,26 @@ if prompt := st.chat_input("How can I help you? / ¿Cómo te puedo ayudar?"):
                 for chunk in stream:
                     if chunk.text: yield chunk.text
 
+            # Renders Text
             response = st.write_stream(typing_speed)
             st.session_state.chat_history.append({"role": "assistant", "content": response})
+            autoscroll_down = force_auto_scroll()
             
-            # TRIGGER UPDATED SECURE AUTOSCROLL 
-            force_auto_scroll()
+            # FAST INVISIBLE CLOUD SAVE - (Triggers Thread to run post to google sheets in background without delaying bot UI)
+            threading.Thread(target=save_log_to_sheets, args=(prompt, response)).start()
             
-        except:
-            st.error("Connection pause. Please ask again.")
+        except Exception as e:
+            # Silent instant backup catch handling
+            try:
+                stream = model.generate_content([prompt], stream=True)
+                def backup_speed():
+                    for chunk in stream:
+                        if chunk.text: yield chunk.text
+                response = st.write_stream(backup_speed)
+                st.session_state.chat_history.append({"role": "assistant", "content": response})
+                force_auto_scroll()
+                
+                # Cloud Log Trigger
+                threading.Thread(target=save_log_to_sheets, args=(prompt, response)).start()
+            except:
+                st.error("Connectivity pause. Resend your message please.")
