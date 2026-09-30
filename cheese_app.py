@@ -115,7 +115,7 @@ def load_feather_brain():
     extracted_pdf_data = "No local specs loaded."
     if uploaded_gfiles:
         try:
-            reader_model = genai.GenerativeModel('gemini-2.5-flash')
+            reader_model = genai.GenerativeModel('gemini-3.8-flash')
             req = uploaded_gfiles +["Extract all facts, nutrition specs, cheese variants, sizes (lb/oz), and pack sizes into detailed bullet points. Include ALL specific specs and facts from these sheets."]
             extracted_pdf_data = reader_model.generate_content(req).text
         except Exception as e:
@@ -158,7 +158,7 @@ config = genai.types.GenerationConfig(temperature=0.0, candidate_count=1)
 
 try:
     model = genai.GenerativeModel(
-        model_name='gemini-2.5-flash',
+        model_name='gemini-3.8-flash',
         system_instruction=sys_prompt,
         generation_config=config
     )
